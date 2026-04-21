@@ -34,7 +34,8 @@ input[type=range] { width: 300px; vertical-align: middle; }
 <div class="legend">
 	<span style="background:#333"></span> persist &nbsp;
 	<span style="background:#c33"></span> exit &nbsp;
-	<span style="background:#36a"></span> enter
+	<span style="background:#36a"></span> enter &nbsp;
+	<span style="background:white;border:2px solid #333"></span> has more descendants
 </div>
 
 <svg id="canvas" preserveAspectRatio="xMinYMid meet"></svg>
@@ -130,6 +131,21 @@ function buildScene(oldTree, newTree) {
 		});
 	});
 
+	// ── Tip vs internal classification ──
+	// A node is a tip if it doesn't appear as a source (parent) in the tree it
+	// belongs to. For persist nodes it may be a tip in one tree and internal in
+	// the other (e.g. a collapsed subtree root that gets expanded); treat it as
+	// a tip if it's a tip in EITHER tree so the label stays visible throughout.
+	const oldInternal = new Set();
+	oldTree.edges.forEach(e => { oldInternal.add(e.source); });
+	const newInternal = new Set();
+	newTree.edges.forEach(e => { newInternal.add(e.source); });
+	nodes.forEach(n => {
+		if (n.kind === 'exit')        n.isTip = !oldInternal.has(n.id);
+		else if (n.kind === 'enter')  n.isTip = !newInternal.has(n.id);
+		else /* persist */            n.isTip = !oldInternal.has(n.id) || !newInternal.has(n.id);
+	});
+
 	// ── Edges ──
 	const edgeKey = e => e.source + '->' + e.target;
 	const oldEdgeMap = {};
@@ -223,10 +239,19 @@ function render(scene) {
 
 		const circle = document.createElementNS(NS, 'circle');
 		circle.setAttribute('r', '2.5');
-		circle.setAttribute('fill', kindColor(n.kind));
+		const isMrca = n.label.startsWith('mrca') || n.label.startsWith('other_mrca');
+		if (n.isTip && isMrca) {
+			// Hollow circle: tip in the summary but has more descendants
+			circle.setAttribute('fill', 'white');
+			circle.setAttribute('stroke', kindColor(n.kind));
+			circle.setAttribute('stroke-width', '1');
+		} else {
+			circle.setAttribute('fill', kindColor(n.kind));
+		}
 		g.appendChild(circle);
 
-		if (!n.label.startsWith('mrca')) {
+		// Show labels for all tips; hide mrca* labels on internal nodes only
+		if (n.isTip || !isMrca) {
 			const text = document.createElementNS(NS, 'text');
 			text.setAttribute('x', '5');
 			text.setAttribute('y', '3');
