@@ -132,18 +132,17 @@ function buildScene(oldTree, newTree) {
 	});
 
 	// ── Tip vs internal classification ──
-	// A node is a tip if it doesn't appear as a source (parent) in the tree it
-	// belongs to. For persist nodes it may be a tip in one tree and internal in
-	// the other (e.g. a collapsed subtree root that gets expanded); treat it as
-	// a tip if it's a tip in EITHER tree so the label stays visible throughout.
+	// A node is a tip if it doesn't appear as a source (parent) in its tree.
+	// For persist nodes we record both sides — a collapsed subtree root that
+	// gets expanded is a tip in one tree and internal in the other, so the
+	// renderer picks the classification matching the current animation phase.
 	const oldInternal = new Set();
 	oldTree.edges.forEach(e => { oldInternal.add(e.source); });
 	const newInternal = new Set();
 	newTree.edges.forEach(e => { newInternal.add(e.source); });
 	nodes.forEach(n => {
-		if (n.kind === 'exit')        n.isTip = !oldInternal.has(n.id);
-		else if (n.kind === 'enter')  n.isTip = !newInternal.has(n.id);
-		else /* persist */            n.isTip = !oldInternal.has(n.id) || !newInternal.has(n.id);
+		n.isTipOld = (n.id in oldById) && !oldInternal.has(n.id);
+		n.isTipNew = (n.id in newById) && !newInternal.has(n.id);
 	});
 
 	// ── Edges ──
@@ -237,10 +236,18 @@ function render(scene) {
 		g.setAttribute('transform', `translate(${n.current.x},${n.current.y})`);
 		g.setAttribute('opacity', n.currentOpacity);
 
+		// Pick tip/internal status for the current animation phase: before the
+		// midpoint use the old tree's classification, after use the new tree's.
+		// For exit/enter nodes only one side is defined.
+		let isTip;
+		if (n.kind === 'exit')       isTip = n.isTipOld;
+		else if (n.kind === 'enter') isTip = n.isTipNew;
+		else                         isTip = currentT < 0.5 ? n.isTipOld : n.isTipNew;
+
 		const circle = document.createElementNS(NS, 'circle');
 		circle.setAttribute('r', '2.5');
 		const isMrca = n.label.startsWith('mrca') || n.label.startsWith('other_mrca');
-		if (n.isTip && isMrca) {
+		if (isTip && isMrca) {
 			// Hollow circle: tip in the summary but has more descendants
 			circle.setAttribute('fill', 'white');
 			circle.setAttribute('stroke', kindColor(n.kind));
@@ -251,7 +258,7 @@ function render(scene) {
 		g.appendChild(circle);
 
 		// Show labels for all tips; hide mrca* labels on internal nodes only
-		if (n.isTip || !isMrca) {
+		if (isTip || !isMrca) {
 			const text = document.createElementNS(NS, 'text');
 			text.setAttribute('x', '5');
 			text.setAttribute('y', '3');
