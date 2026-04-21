@@ -20,7 +20,7 @@ Transitions between successive views are animated: shared nodes slide to their n
 - **Summary tree engine** (`summary.php`): computes summaries by node count or leaf count, with optional forced-expansion paths for focus-on navigation. Outputs Newick (with NHX annotations for node type, weight, and leaf status) and a nested PHP data structure for HTML rendering.
 - **Tree toolkit** (`tree/`): PHP classes for tree nodes, iterators, Newick parsing, and tree ordering (ladderize by weight).
 - **HTML list view** (`test.php`): renders the summary as a nested `<ul>` with CSS classes distinguishing expanded internals, genuine supertree tips, collapsed subtree roots, "other" placeholders, and the focal node. Controls for taxon id, k, and mode (by-leaves / by-nodes).
-- **Transition viewer** (`transition.html`): standalone SVG animation that loads two tree layouts from `tree1.json` and `tree2.json` and animates the morph between them (exit/persist/enter with anchor rules, cubic easing, bidirectional playback, scrub slider). Labels for `mrca*` internal nodes are hidden.
+- **Transition viewer** (`transition.html`): standalone SVG animation that loads two tree layouts from `tree1.json` and `tree2.json` and animates the morph between them (exit/persist/enter with anchor rules, cubic easing, bidirectional playback, scrub slider). Tip nodes always show labels; internal `mrca*` labels are hidden. Tips with `mrca*` labels are drawn as hollow circles to indicate they have more descendants (following the OTT viewer convention). SVG fills the browser window and rescales on resize via viewBox.
 
 ## Existing OTT viewer conventions
 
@@ -36,14 +36,15 @@ The current opentreeoflife.org tree viewer (`legend.png`) uses the following vis
 
 ### Next steps
 
-- **Subtree-leaf labels**: nodes that are leaves in the summary but internal in the synthesis tree (i.e. roots of unexpanded subtrees) currently have their `mrca*` labels hidden along with all other internal nodes. We should only hide `mrca*` labels on nodes that are internal in the summary; subtree-leaf `mrca*` nodes need a placeholder label (e.g. weight, or a representative descendant name) so the user can see what that collapsed clade represents.
+- **Subtree-leaf labels**: the transition viewer now shows `mrca*` labels on tips and hides them on internals, but the labels are still raw OTT identifiers (e.g. `mrcaott31017ott134468`). These need replacing with something meaningful — e.g. weight/descendant count, or a representative descendant name. This requires richer metadata in the input JSON (currently just id, label, x, y).
 - **"Other" node transitions**: when a node moves between being collapsed inside an "other" set and being individually visible (or vice versa), the animation needs to handle this gracefully. This requires deciding on a visual representation for the transition (e.g. the node emerging from / merging into the "other" placeholder position).
 - **"Other" node contents**: the user needs a way to see what taxa are inside an "other" set, since a taxon of interest may be hidden there. Options include a tooltip, an expandable panel, or a search that highlights which "other" set contains a given name.
 - **Direct summary-to-transition pipeline**: currently the transition viewer reads pre-built JSON files (`tree1.json`, `tree2.json`) generated externally via `treetest.php` from Newick strings shown by `test.php`. This needs to be replaced by a direct pipeline: click a node in the viewer, compute the new summary server-side, return the laid-out tree as JSON, and animate the transition client-side.
 
 ### Later
 
-- Consider adopting the existing OTT viewer's visual conventions: hollow vs filled circles to distinguish unexpanded subtree roots from genuine tips; node size scaled by descendant count; solid vs dashed edges for phylogeny-supported vs taxonomy-only paths.
+- Hollow circles for unexpanded subtree roots are now implemented in the transition viewer (based on `mrca*` label heuristic). Later, extend this to use explicit metadata (node type, weight) from the JSON so any non-leaf tip gets a hollow circle regardless of label.
+- Consider further OTT viewer conventions: node size scaled by descendant count; solid vs dashed edges for phylogeny-supported vs taxonomy-only paths.
 - Integrate the PHP tree layout code (`tree/`) to compute cladogram coordinates server-side and emit JSON directly from the summary engine.
 - Handle the "other" node intersection problem: when transitioning between two trees, determine whether paired "other" nodes (same parent) share enough members to be treated as persistent vs. exit/enter.
 - Add search: find a taxon by name and navigate to it (with focus-on).
