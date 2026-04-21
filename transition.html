@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Tree Transition Demo</title>
+<style>
+html, body { height: 100%; margin: 0; overflow: hidden; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; padding: 0.5em 2em; display: flex; flex-direction: column; box-sizing: border-box; }
+svg { border: 1px solid #ccc; display: block; background: #fafafa; flex: 1 1 0; min-height: 0; width: 100%; }
+.controls { margin: 0.5em 0; }
+button { padding: 0.3em 1em; margin-right: 0.5em; }
+input[type=range] { width: 300px; vertical-align: middle; }
+.label { font-size: 7px; }
+.legend { font-size: 13px; margin-top: 0.5em; }
+.legend span { display: inline-block; width: 12px; height: 12px; border-radius: 50%;
+               vertical-align: middle; margin-right: 4px; }
+</style>
+</head>
+<body>
+
+<h2>Tree Transition: Procellariiformes &harr; Pterodroma</h2>
+<p style="font-size:12px;color:#666;margin:0">Shared: Pterodroma, mrcaott73703ott271031, other_Pterodroma. Everything else exits or enters.</p>
+
+<div class="controls">
+	<button onclick="jumpTo(0)">t1</button>
+	<button onclick="playAnim(-1)">&#9664; t2 &rarr; t1</button>
+	<button onclick="playAnim(1)">t1 &rarr; t2 &#9654;</button>
+	<button onclick="jumpTo(1)">t2</button>
+	<label>t: <input id="slider" type="range" min="0" max="1000" value="0"
+		oninput="scrub(this.value/1000)"></label>
+	<span id="t-display">0.00</span>
+</div>
+
+<div class="legend">
+	<span style="background:#333"></span> persist &nbsp;
+	<span style="background:#c33"></span> exit &nbsp;
+	<span style="background:#36a"></span> enter
+</div>
+
+<svg id="canvas" preserveAspectRatio="xMinYMid meet"></svg>
+
+<script>
+// ─── Trees (loaded from tree1.json and tree2.json) ──────────────────────────
+let t1 = null, t2 = null;
+
+async function loadTrees() {
+	const [r1, r2] = await Promise.all([fetch('tree1.json'), fetch('tree2.json')]);
+	t1 = await r1.json();
+	t2 = await r2.json();
+	init();
+}
+
+// ─── Build Transition Scene ─────────────────────────────────────────────────
+
+function buildScene(oldTree, newTree) {
+	const yScale = 1.8; // vertical spacing multiplier (increase to spread nodes apart)
+
+	const oldById = {};
+	oldTree.nodes.forEach(n => { oldById[n.id] = { ...n, y: n.y * yScale }; });
+	const newById = {};
+	newTree.nodes.forEach(n => { newById[n.id] = { ...n, y: n.y * yScale }; });
+
+	// Parent lookup (child → parent id)
+	const oldParent = {};
+	oldTree.edges.forEach(e => { oldParent[e.target] = e.source; });
+	const newParent = {};
+	newTree.edges.forEach(e => { newParent[e.target] = e.source; });
+
+	// Find nearest persistent ancestor for an exit node — returns anchor's NEW pos.
+	// If no persistent ancestor exists, the node slides off to the left (toward
+	// the root side of the cladogram) at its own vertical position.
+	function exitAnchor(id) {
+		let cur = oldParent[id];
+		while (cur) {
+			if (cur in newById) return { x: newById[cur].x, y: newById[cur].y };
+			cur = oldParent[cur];
+		}
+		return { x: 0, y: oldById[id].y };
+	}
+
+	// Find nearest persistent ancestor for an enter node — returns anchor's OLD pos.
+	// If no persistent ancestor exists, the node grows in from the left edge.
+	function enterAnchor(id) {
+		let cur = newParent[id];
+		while (cur) {
+			if (cur in oldById) return { x: oldById[cur].x, y: oldById[cur].y };
+			cur = newParent[cur];
+		}
+		return { x: 0, y: newById[id].y };
+	}
+
+	// ── Nodes ──
+	const allIds = new Set([
+		...oldTree.nodes.map(n => n.id),
+		...newTree.nodes.map(n => n.id)
+	]);
+
+	const nodes = [];
+	allIds.forEach(id => {
+		const inOld = id in oldById;
+		const inNew = id in newById;
+		let kind, from, to, fromOpacity, toOpacity, label;
+
+		if (inOld && inNew) {
+			kind = 'persist';
+			from = { x: oldById[id].x, y: oldById[id].y };
+			to   = { x: newById[id].x, y: newById[id].y };
+			fromOpacity = 1; toOpacity = 1;
+			label = newById[id].label || id;
+		} else if (inOld) {
+			kind = 'exit';
+			from = { x: oldById[id].x, y: oldById[id].y };
+			to   = exitAnchor(id);
+			fromOpacity = 1; toOpacity = 0;
+			label = oldById[id].label || id;
+		} else {
+			kind = 'enter';
+			from = enterAnchor(id);
+			to   = { x: newById[id].x, y: newById[id].y };
+			fromOpacity = 0; toOpacity = 1;
+			label = newById[id].label || id;
+		}
+
+		nodes.push({
+			id, label, kind,
+			from, to,
+			current: { x: from.x, y: from.y },
+			fromOpacity, toOpacity,
+			currentOpacity: fromOpacity
+		});
+	});
+
+	// ── Edges ──
+	const edgeKey = e => e.source + '->' + e.target;
+	const oldEdgeMap = {};
+	oldTree.edges.forEach(e => { oldEdgeMap[edgeKey(e)] = e; });
+	const newEdgeMap = {};
+	newTree.edges.forEach(e => { newEdgeMap[edgeKey(e)] = e; });
+
+	const allEdgeKeys = new Set([...Object.keys(oldEdgeMap), ...Object.keys(newEdgeMap)]);
+	const edges = [];
+	allEdgeKeys.forEach(key => {
+		const inOld = key in oldEdgeMap;
+		const inNew = key in newEdgeMap;
+		const e = inNew ? newEdgeMap[key] : oldEdgeMap[key];
+		let kind;
+		if (inOld && inNew) kind = 'persist';
+		else if (inOld)     kind = 'exit';
+		else                kind = 'enter';
+		edges.push({ source: e.source, target: e.target, kind });
+	});
+
+	return { nodes, edges };
+}
+
+// ─── Interpolation ──────────────────────────────────────────────────────────
+
+function lerp(a, b, t) { return a + (b - a) * t; }
+
+// Ease-in-out (cubic)
+function ease(t) {
+	return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+}
+
+function updateScene(scene, t) {
+	const et = ease(t);
+	scene.nodes.forEach(n => {
+		n.current.x = lerp(n.from.x, n.to.x, et);
+		n.current.y = lerp(n.from.y, n.to.y, et);
+		n.currentOpacity = lerp(n.fromOpacity, n.toOpacity, et);
+	});
+}
+
+// ─── SVG Rendering ──────────────────────────────────────────────────────────
+
+const svg = document.getElementById('canvas');
+const NS = 'http://www.w3.org/2000/svg';
+
+function clearSVG() {
+	while (svg.firstChild) svg.removeChild(svg.firstChild);
+}
+
+function kindColor(kind) {
+	if (kind === 'exit')  return '#c33';
+	if (kind === 'enter') return '#36a';
+	return '#333';
+}
+
+function render(scene) {
+	clearSVG();
+	const nodeById = {};
+	scene.nodes.forEach(n => { nodeById[n.id] = n; });
+
+	// Edges first (drawn behind nodes)
+	scene.edges.forEach(e => {
+		const src = nodeById[e.source];
+		const tgt = nodeById[e.target];
+		if (!src || !tgt) return;
+
+		const opacity = Math.min(src.currentOpacity, tgt.currentOpacity);
+		if (opacity < 0.01) return;
+
+		// Cladogram L-shape: vertical at parent x, then horizontal to child
+		const path = document.createElementNS(NS, 'path');
+		const d = `M ${src.current.x},${src.current.y}`
+			+ ` L ${src.current.x},${tgt.current.y}`
+			+ ` L ${tgt.current.x},${tgt.current.y}`;
+		path.setAttribute('d', d);
+		path.setAttribute('fill', 'none');
+		path.setAttribute('stroke', kindColor(e.kind));
+		path.setAttribute('stroke-width', '1.5');
+		path.setAttribute('opacity', opacity);
+		svg.appendChild(path);
+	});
+
+	// Nodes
+	scene.nodes.forEach(n => {
+		if (n.currentOpacity < 0.01) return;
+
+		const g = document.createElementNS(NS, 'g');
+		g.setAttribute('transform', `translate(${n.current.x},${n.current.y})`);
+		g.setAttribute('opacity', n.currentOpacity);
+
+		const circle = document.createElementNS(NS, 'circle');
+		circle.setAttribute('r', '2.5');
+		circle.setAttribute('fill', kindColor(n.kind));
+		g.appendChild(circle);
+
+		if (!n.label.startsWith('mrca')) {
+			const text = document.createElementNS(NS, 'text');
+			text.setAttribute('x', '5');
+			text.setAttribute('y', '3');
+			text.setAttribute('class', 'label');
+			text.setAttribute('fill', kindColor(n.kind));
+			text.textContent = n.label;
+			g.appendChild(text);
+		}
+
+		svg.appendChild(g);
+	});
+}
+
+// ─── Animation Controls ─────────────────────────────────────────────────────
+
+let scene = null;
+let animId = null;
+let currentT = 0;
+
+function init() {
+	scene = buildScene(t1, t2);
+	fitViewBox(scene);
+	setT(0);
+}
+
+// Compute viewBox from all positions the scene will ever visit (from + to),
+// plus room for labels on the right.
+function fitViewBox(scene) {
+	let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+	scene.nodes.forEach(n => {
+		for (const p of [n.from, n.to]) {
+			if (p.x < minX) minX = p.x;
+			if (p.y < minY) minY = p.y;
+			if (p.x > maxX) maxX = p.x;
+			if (p.y > maxY) maxY = p.y;
+		}
+	});
+	const labelMargin = 200; // room for text to the right of tip nodes
+	const margin = 10;
+	const vx = minX - margin;
+	const vy = minY - margin;
+	const vw = (maxX - minX) + labelMargin + margin * 2;
+	const vh = (maxY - minY) + margin * 2;
+	svg.setAttribute('viewBox', `${vx} ${vy} ${vw} ${vh}`);
+}
+function setT(t) {
+	currentT = Math.max(0, Math.min(1, t));
+	updateScene(scene, currentT);
+	render(scene);
+	document.getElementById('slider').value = Math.round(currentT * 1000);
+	document.getElementById('t-display').textContent = currentT.toFixed(2);
+}
+
+function jumpTo(t) {
+	if (animId) { cancelAnimationFrame(animId); animId = null; }
+	setT(t);
+}
+
+function scrub(t) { setT(t); }
+
+// direction: +1 = forward (t1→t2), -1 = reverse (t2→t1)
+function playAnim(direction) {
+	if (animId) { cancelAnimationFrame(animId); animId = null; }
+	const duration = 1200; // ms
+	const startT = currentT;
+	const endT = direction > 0 ? 1 : 0;
+	// Scale duration by how far we actually need to travel
+	const distance = Math.abs(endT - startT);
+	if (distance < 0.001) { setT(endT); return; }
+	const scaledDuration = duration * distance;
+	const startTime = performance.now();
+
+	function tick(now) {
+		const elapsed = now - startTime;
+		const frac = Math.min(elapsed / scaledDuration, 1);
+		setT(startT + (endT - startT) * frac);
+		if (frac < 1) {
+			animId = requestAnimationFrame(tick);
+		} else {
+			animId = null;
+		}
+	}
+	animId = requestAnimationFrame(tick);
+}
+
+// Load trees and initialise
+loadTrees();
+</script>
+</body>
+</html>
