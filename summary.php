@@ -28,6 +28,7 @@ class SummaryTree
 	var $edges        = array();  // child_id => parent_id
 	var $other        = array();  // parent_id => [pending child ids]
 	var $weights      = array();  // id => int  (from tree.weight)
+	var $nleft        = array();  // id => int  (from tree.nleft; canonical supertree order)
 	var $has_children = array();  // id => bool (true iff node has children in supertree)
 	var $forced_ids   = array();  // id (as string) => true; nodes on a forced-expansion path
 
@@ -71,6 +72,7 @@ class SummaryTree
 		$this->edges        = array();
 		$this->other        = array();
 		$this->weights      = array();
+		$this->nleft        = array();
 		$this->has_children = array();
 		$this->forced_ids   = $forced_ids;
 
@@ -156,6 +158,10 @@ class SummaryTree
 	{
 		$this->nodes[$node->id]   = $node->name;
 		$this->weights[$node->id] = isset($node->weight) ? (int)$node->weight : 0;
+		if (isset($node->nleft))
+		{
+			$this->nleft[$node->id] = (int)$node->nleft;
+		}
 	}
 
 	//------------------------------------------------------------------------------------
@@ -171,6 +177,10 @@ class SummaryTree
 			if (isset($child->weight))
 			{
 				$this->weights[$child->id] = (int)$child->weight;
+			}
+			if (isset($child->nleft))
+			{
+				$this->nleft[$child->id] = (int)$child->nleft;
 			}
 			$pq->en_queue($child->id, $child->name, $this->score_for($child->id));
 		}
@@ -190,7 +200,11 @@ class SummaryTree
 	//   * If weight($focal_id) >= $k the focal node is used as the root (drill in).
 	//   * Otherwise climb to the smallest ancestor A with weight(A) >= $k (or the
 	//     tree root if none reaches $k), and summarise from A with every node on
-	//     the path A -> focal force-expanded.
+	//     the path A -> focal AND every descendant of focal force-expanded. Forcing
+	//     the descendants guarantees the focal subtree is never partially collapsed
+	//     (otherwise a high-scoring sibling clade of a path node could steal budget
+	//     from the focal's own children, and a clicked leaf could end up drawn as a
+	//     collapsed tip while its cousins were expanded).
 	function focus_on($focal_id, $k)
 	{
 		$this->focal_id = (string)$focal_id;
@@ -234,8 +248,32 @@ class SummaryTree
 
 		$forced = array();
 		foreach ($path as $pid) $forced[$pid] = true;
+		foreach ($this->dbtree->get_all_descendant_ids($focal_id) as $did)
+		{
+			$forced[(string)$did] = true;
+		}
 
 		$this->summarise($ancestor_id, $k, 'leaves', $forced);
+	}
+
+	//------------------------------------------------------------------------------------
+	// Sort key for ordering sibling children in output. Uses the supertree's
+	// nleft (pre-order) index so the left-to-right order of any given parent's
+	// children is independent of the current focal node — preventing visual
+	// jumps when navigating between overlapping views. "other_" placeholders
+	// always sort last.
+	function sort_key($id)
+	{
+		$sid = (string)$id;
+		if (strpos($sid, 'other_') === 0) return PHP_INT_MAX;
+		return isset($this->nleft[$sid]) ? $this->nleft[$sid] : PHP_INT_MAX - 1;
+	}
+
+	//------------------------------------------------------------------------------------
+	// usort/uasort callback: compare two summary ids by sort_key.
+	function compare_by_nleft($a_id, $b_id)
+	{
+		return $this->sort_key($a_id) <=> $this->sort_key($b_id);
 	}
 
 	//------------------------------------------------------------------------------------
@@ -330,8 +368,10 @@ class SummaryTree
 		$out = '';
 		if (isset($children_of[$node_id]) && count($children_of[$node_id]) > 0)
 		{
+			$kids = $children_of[$node_id];
+			usort($kids, array($this, 'compare_by_nleft'));
 			$parts = array();
-			foreach ($children_of[$node_id] as $child_id)
+			foreach ($kids as $child_id)
 			{
 				$parts[] = $this->newick_recurse($child_id, $children_of);
 			}
@@ -420,10 +460,15 @@ class SummaryTree
 			}
 		}
 
+		$self = $this;
+		$by_nleft = function ($a, $b) use ($self)
+		{
+			return $self->compare_by_nleft($a->id, $b->id);
+		};
 		foreach ($cache as $id => &$node)
 		{
-			if (isset($node->summary)) uasort($node->summary, 'name_compare');
-			if (isset($node->others))  uasort($node->others,  'name_compare');
+			if (isset($node->summary)) uasort($node->summary, $by_nleft);
+			if (isset($node->others))  uasort($node->others,  $by_nleft);
 		}
 		unset($node);
 
