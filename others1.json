@@ -1,0 +1,242 @@
+{
+    "other_Pterodroma": [
+        {
+            "id": "ott3595612",
+            "label": "Pterodroma atrata",
+            "weight": 1,
+            "supertree_leaf": true
+        },
+        {
+            "id": "ott3595616",
+            "label": "Pterodroma caribbaea",
+            "weight": 1,
+            "supertree_leaf": true
+        },
+        {
+            "id": "ott7663010",
+            "label": "Pterodroma chionophara",
+            "weight": 1,
+            "supertree_leaf": true
+        },
+        {
+            "id": "ott7663011",
+            "label": "Pterodroma deceptornis",
+            "weight": 1,
+            "supertree_leaf": true
+        },
+        {
+            "id": "ott3595618",
+            "label": "Pterodroma defilippiana",
+            "weight": 1,
+            "supertree_leaf": true
+        },
+        {
+            "id": "ott845414",
+            "label": "Pterodroma deserta",
+            "weight": 1,
+            "supertree_leaf": true
+        },
+        {
+            "id": "ott3595615",
+            "label": "Pterodroma occulta",
+            "weight": 1,
+            "supertree_leaf": true
+        },
+        {
+            "id": "ott7663013",
+            "label": "Pterodroma oliveri",
+            "weight": 1,
+            "supertree_leaf": true
+        },
+        {
+            "id": "ott3595617",
+            "label": "Pterodroma rupinarum",
+            "weight": 1,
+            "supertree_leaf": true
+        },
+        {
+            "id": "ott7663014",
+            "label": "Pterodroma wortheni",
+            "weight": 1,
+            "supertree_leaf": true
+        }
+    ],
+    "other_Puffinus": [
+        {
+            "id": "ott474584",
+            "label": "Puffinus atrodorsalis",
+            "weight": 1,
+            "supertree_leaf": true
+        },
+        {
+            "id": "ott6155083",
+            "label": "Puffinus barnesi",
+            "weight": 1,
+            "supertree_leaf": true
+        },
+        {
+            "id": "ott6155084",
+            "label": "Puffinus calhouni",
+            "weight": 1,
+            "supertree_leaf": true
+        },
+        {
+            "id": "ott7663017",
+            "label": "Puffinus chlororhynchus",
+            "weight": 1,
+            "supertree_leaf": true
+        },
+        {
+            "id": "ott501960",
+            "label": "Puffinus colstoni",
+            "weight": 1,
+            "supertree_leaf": true
+        },
+        {
+            "id": "ott7663018",
+            "label": "Puffinus cuneatus",
+            "weight": 1,
+            "supertree_leaf": true
+        },
+        {
+            "id": "ott6155085",
+            "label": "Puffinus diatomicus",
+            "weight": 1,
+            "supertree_leaf": true
+        },
+        {
+            "id": "ott1078613",
+            "label": "Puffinus dichrous",
+            "weight": 1,
+            "supertree_leaf": true
+        },
+        {
+            "id": "ott3595590",
+            "label": "Puffinus gilmorei",
+            "weight": 1,
+            "supertree_leaf": true
+        },
+        {
+            "id": "ott946842",
+            "label": "Puffinus haurakiensis",
+            "weight": 1,
+            "supertree_leaf": true
+        },
+        {
+            "id": "ott4947458",
+            "label": "Puffinus heinrothi",
+            "weight": 1,
+            "supertree_leaf": true
+        },
+        {
+            "id": "ott6155088",
+            "label": "Puffinus inceptor",
+            "weight": 1,
+            "supertree_leaf": true
+        },
+        {
+            "id": "ott31019",
+            "label": "Puffinus kermadecensis",
+            "weight": 1,
+            "supertree_leaf": true
+        },
+        {
+            "id": "ott7663020",
+            "label": "Puffinus mariae",
+            "weight": 1,
+            "supertree_leaf": true
+        },
+        {
+            "id": "ott3595597",
+            "label": "Puffinus mcgalli",
+            "weight": 1,
+            "supertree_leaf": true
+        },
+        {
+            "id": "ott6155089",
+            "label": "Puffinus micraulax",
+            "weight": 1,
+            "supertree_leaf": true
+        },
+        {
+            "id": "ott3595583",
+            "label": "Puffinus mitchelli",
+            "weight": 1,
+            "supertree_leaf": true
+        },
+        {
+            "id": "ott471655",
+            "label": "Puffinus nativitatis",
+            "weight": 1,
+            "supertree_leaf": true
+        },
+        {
+            "id": "ott1078603",
+            "label": "Puffinus nicolae",
+            "weight": 1,
+            "supertree_leaf": true
+        },
+        {
+            "id": "ott7663021",
+            "label": "Puffinus parvus",
+            "weight": 1,
+            "supertree_leaf": true
+        },
+        {
+            "id": "ott1078602",
+            "label": "Puffinus polynesiae",
+            "weight": 1,
+            "supertree_leaf": true
+        },
+        {
+            "id": "ott3595596",
+            "label": "Puffinus priscus",
+            "weight": 1,
+            "supertree_leaf": true
+        },
+        {
+            "id": "ott3595588",
+            "label": "Puffinus raemdonckii",
+            "weight": 1,
+            "supertree_leaf": true
+        },
+        {
+            "id": "ott3595584",
+            "label": "Puffinus reinholdi",
+            "weight": 1,
+            "supertree_leaf": true
+        },
+        {
+            "id": "ott172125",
+            "label": "Puffinus temptator",
+            "weight": 1,
+            "supertree_leaf": true
+        },
+        {
+            "id": "ott401444",
+            "label": "Puffinus tunneyi",
+            "weight": 1,
+            "supertree_leaf": true
+        }
+    ],
+    "other_Oceanites gracilis galapagoensis + Fregetta grallaria titan": [
+        {
+            "id": "ott49103",
+            "label": "Oceanites gracilis",
+            "weight": 2,
+            "supertree_leaf": false
+        },
+        {
+            "id": "ott6155057",
+            "label": "Oceanites pincoyae",
+            "weight": 1,
+            "supertree_leaf": true
+        },
+        {
+            "id": "ott6155058",
+            "label": "Oceanites zaloscarthmus",
+            "weight": 1,
+            "supertree_leaf": true
+        }
+    ]
+}
