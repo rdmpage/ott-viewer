@@ -14,6 +14,19 @@ input[type=range] { width: 300px; vertical-align: middle; }
 .legend { font-size: 13px; margin-top: 0.5em; }
 .legend span { display: inline-block; width: 12px; height: 12px; border-radius: 50%;
                vertical-align: middle; margin-right: 4px; }
+
+/* Peek overlay: rendered inside the SVG as a polytomy fanning out from the
+   other_ node. A backdrop rect sits under the text labels so they stay legible
+   over the tree. Color matches the "other" convention used elsewhere.
+   Opacity + positions are animated per-frame from JS, not CSS, so nothing
+   conflicts when renderPeek redraws on every tick of the main animation. */
+.peek-edge     { stroke: #b36b00; stroke-width: 1; fill: none; }
+.peek-label    { font-size: 7px; fill: #7a4a00; cursor: pointer; }
+.peek-hit      { fill: transparent; cursor: pointer; }
+.peek-hit:hover + .peek-label { fill: #b36b00; font-weight: 600; }
+.peek-backdrop { fill: rgba(255,255,255,0.78); stroke: none; }
+.peek-node-solid  { fill: #b36b00; }
+.peek-node-hollow { fill: white; stroke: #b36b00; stroke-width: 1; }
 </style>
 </head>
 <body>
@@ -43,11 +56,22 @@ input[type=range] { width: 300px; vertical-align: middle; }
 <script>
 // ─── Trees (loaded from tree1.json and tree2.json) ──────────────────────────
 let t1 = null, t2 = null;
+// Member lists for "other_" summary nodes, keyed by node id. Optional — if
+// the side-car files are absent the peek panel just won't open. Produced by
+// others.php (one JSON per tree view).
+let others1 = null, others2 = null;
 
 async function loadTrees() {
-	const [r1, r2] = await Promise.all([fetch('tree1.json'), fetch('tree2.json')]);
+	const [r1, r2, o1, o2] = await Promise.all([
+		fetch('tree1.json'),
+		fetch('tree2.json'),
+		fetch('others1.json').catch(() => null),
+		fetch('others2.json').catch(() => null),
+	]);
 	t1 = await r1.json();
 	t2 = await r2.json();
+	if (o1 && o1.ok) others1 = await o1.json();
+	if (o2 && o2.ok) others2 = await o2.json();
 	init();
 }
 
@@ -235,6 +259,7 @@ function render(scene) {
 		const g = document.createElementNS(NS, 'g');
 		g.setAttribute('transform', `translate(${n.current.x},${n.current.y})`);
 		g.setAttribute('opacity', n.currentOpacity);
+		g.setAttribute('data-node-id', n.id);
 
 		// Pick tip/internal status for the current animation phase: before the
 		// midpoint use the old tree's classification, after use the new tree's.
@@ -246,9 +271,17 @@ function render(scene) {
 
 		const circle = document.createElementNS(NS, 'circle');
 		circle.setAttribute('r', '2.5');
-		const isMrca = n.label.startsWith('mrca') || n.label.startsWith('other_mrca');
-		if (isTip && isMrca) {
-			// Hollow circle: tip in the summary but has more descendants
+		// Circle rule:
+		//   solid  = node is internal in this view, OR is a supertree leaf
+		//   hollow = tip in this view but the supertree has more descendants
+		// If the JSON carries an explicit supertree_leaf flag (future pipeline)
+		// we trust it; otherwise fall back to the label heuristic (any "mrca"-ish
+		// label is assumed not to be a supertree leaf).
+		const looksMrca = n.label.startsWith('mrca')
+			|| n.label.startsWith('other_mrca')
+			|| n.label.includes(' + ');
+		const isSupertreeLeaf = ('supertree_leaf' in n) ? !!n.supertree_leaf : !looksMrca;
+		if (isTip && !isSupertreeLeaf) {
 			circle.setAttribute('fill', 'white');
 			circle.setAttribute('stroke', kindColor(n.kind));
 			circle.setAttribute('stroke-width', '1');
@@ -257,20 +290,257 @@ function render(scene) {
 		}
 		g.appendChild(circle);
 
-		// Show labels for all tips; hide mrca* labels on internal nodes only
-		if (isTip || !isMrca) {
+		// Show labels for all tips; hide mrca labels on internal nodes only
+		if (isTip || !looksMrca) {
 			const text = document.createElementNS(NS, 'text');
 			text.setAttribute('x', '5');
-			text.setAttribute('y', '3');
+			text.setAttribute('y', '2');
 			text.setAttribute('class', 'label');
+			text.setAttribute('data-node-id', n.id);
 			text.setAttribute('fill', kindColor(n.kind));
-			text.textContent = n.label;
+			// For "other_" summary nodes, append a (count) affordance so the
+			// user can see how many taxa hide inside before clicking. Count
+			// comes from the peek data (if loaded).
+			let display = n.label;
+			if (n.label.startsWith('other_')) {
+				const members = peekMembers(n.label);
+				if (members) display = n.label + ' (' + members.length + ')';
+			}
+			text.textContent = display;
 			g.appendChild(text);
+		}
+
+		// Make "other_" nodes peekable: click opens an SVG polytomy fanning
+		// out from the node, listing the taxa collapsed inside.
+		if (n.label.startsWith('other_')) {
+			g.setAttribute('data-peekable', '1');
+			g.style.cursor = 'pointer';
+			g.addEventListener('click', (ev) => {
+				ev.stopPropagation();
+				openPeek(n.label);
+			});
 		}
 
 		svg.appendChild(g);
 	});
+
+	// Peek overlay is drawn last so it sits on top of the tree.
+	if (peekState) renderPeek();
 }
+
+// ─── Peek overlay (SVG polytomy) ────────────────────────────────────────────
+
+// Open state: anchor node id + its members + when the peek was opened (used
+// to drive the accordion-style expansion animation). Anchor position is
+// re-looked-up every frame so the overlay tracks the node during tree motion.
+let peekState    = null;
+let peekOpenedAt = 0;
+let peekAnimId   = null;
+const PEEK_DURATION = 260;   // ms for the accordion expansion
+
+// Pick the members list for a node id. Prefers the side matching the current
+// animation phase; falls back to the other side so enter/exit nodes still peek.
+function peekMembers(nodeId) {
+	const primary   = currentT < 0.5 ? others1 : others2;
+	const secondary = currentT < 0.5 ? others2 : others1;
+	if (primary   && primary[nodeId])   return primary[nodeId];
+	if (secondary && secondary[nodeId]) return secondary[nodeId];
+	return null;
+}
+
+function openPeek(nodeId) {
+	const members = peekMembers(nodeId);
+	if (!members || !members.length) return;
+	peekState    = { nodeId, members };
+	peekOpenedAt = performance.now();
+	if (peekAnimId) cancelAnimationFrame(peekAnimId);
+	peekTick();
+}
+
+function closePeek() {
+	peekState = null;
+	if (peekAnimId) { cancelAnimationFrame(peekAnimId); peekAnimId = null; }
+	const existing = document.getElementById('peek-overlay');
+	if (existing) existing.remove();
+}
+
+// Drive the expansion animation. Tree's main render() also calls renderPeek,
+// so when the tree is animating the peek stays synced; this ticker keeps it
+// alive while the tree is idle.
+function peekTick() {
+	renderPeek();
+	if (!peekState) return;
+	const elapsed = performance.now() - peekOpenedAt;
+	if (elapsed < PEEK_DURATION) {
+		peekAnimId = requestAnimationFrame(peekTick);
+	} else {
+		peekAnimId = null;
+	}
+}
+
+// Draw (or redraw) the peek as an SVG group layered on top of the tree.
+// Items slide out from the anchor over PEEK_DURATION ms with an ease-out cubic.
+function renderPeek() {
+	if (!peekState) return;
+	const { nodeId, members } = peekState;
+
+	const anchor = scene && scene.nodes.find(n => n.id === nodeId);
+	if (!anchor || anchor.currentOpacity < 0.01) { closePeek(); return; }
+
+	// Remove any stale overlay and re-render in full.
+	const stale = document.getElementById('peek-overlay');
+	if (stale) stale.remove();
+
+	// Animation progress: 0 on open, 1 when fully expanded.
+	const raw   = Math.min(1, (performance.now() - peekOpenedAt) / PEEK_DURATION);
+	const t     = 1 - Math.pow(1 - raw, 3);  // easeOutCubic
+	const lerp  = (a, b) => a + (b - a) * t;
+
+	// Layout constants (SVG coord space).
+	const rowH     = 10;
+	const branchDx = 8;      // branch length: trunk -> tip circle
+	const circleR  = 2;
+	const circleToText = 5;  // gap between tip circle and start of label
+	const padX     = 4;
+	const padY     = 2;
+	const charW    = 3.6;    // fallback ~width of one char in the 7px label font
+	const labelGap = 12;     // breathing room past the other_ label
+
+	// Shift the list so the trunk sits just past the right edge of the
+	// rendered other_<...> label. Uses getBBox on the actual text element for
+	// precision; falls back to a character-count estimate if that text isn't
+	// in the DOM yet (e.g. very first frame).
+	let labelEndX = anchor.current.x + 5 + nodeId.length * charW;
+	const labelEl = svg.querySelector('text.label[data-node-id="' + CSS.escape(nodeId) + '"]');
+	if (labelEl) {
+		try {
+			const bb = labelEl.getBBox();
+			// bb is in the <g> local frame; translate into the svg frame.
+			labelEndX = anchor.current.x + bb.x + bb.width;
+		} catch (e) { /* ignore */ }
+	}
+	const trunkX = labelEndX + labelGap;
+
+	// Target geometry (fully-expanded positions).
+	const count  = members.length;
+	const totalH = Math.max(0, (count - 1) * rowH);
+	let topTarget = anchor.current.y - totalH / 2;
+
+	const vb   = svg.viewBox.baseVal;
+	const minY = vb.y + 4;
+	const maxY = vb.y + vb.height - 4 - totalH;
+	if (topTarget < minY) topTarget = minY;
+	if (topTarget > maxY) topTarget = maxY;
+
+	const textX = trunkX + branchDx + circleR + circleToText;
+
+	// Backdrop width from the longest label.
+	const longest = members.reduce((acc, m) => Math.max(acc, m.label.length), 0);
+	const backW   = branchDx + circleR + circleToText + (longest * charW) + padX * 2;
+
+	const g = document.createElementNS(NS, 'g');
+	g.setAttribute('id', 'peek-overlay');
+	g.setAttribute('opacity', t);  // fade in with the expansion
+
+	// Backdrop interpolates y-extent from a thin strip at the anchor to the
+	// full list height.
+	const backTop    = lerp(anchor.current.y - rowH / 2, topTarget - rowH / 2 - padY);
+	const backHeight = lerp(rowH, totalH + padY * 2 + rowH);
+	const back = document.createElementNS(NS, 'rect');
+	back.setAttribute('class', 'peek-backdrop');
+	back.setAttribute('x', trunkX - padX);
+	back.setAttribute('y', backTop);
+	back.setAttribute('width', backW);
+	back.setAttribute('height', backHeight);
+	back.setAttribute('rx', '2');
+	g.appendChild(back);
+
+	// Short lead segment from just past the other_<...> label to the trunk.
+	// Starting at labelEndX (rather than the anchor circle) prevents the line
+	// from being drawn over the label text.
+	const lead = document.createElementNS(NS, 'line');
+	lead.setAttribute('class', 'peek-edge');
+	lead.setAttribute('x1', labelEndX + 2);
+	lead.setAttribute('y1', anchor.current.y);
+	lead.setAttribute('x2', trunkX);
+	lead.setAttribute('y2', anchor.current.y);
+	g.appendChild(lead);
+
+	// Trunk: starts as a single point at the anchor, grows into a vertical
+	// line spanning all rows.
+	if (count > 1) {
+		const trunk = document.createElementNS(NS, 'line');
+		trunk.setAttribute('class', 'peek-edge');
+		trunk.setAttribute('x1', trunkX);
+		trunk.setAttribute('y1', lerp(anchor.current.y, topTarget));
+		trunk.setAttribute('x2', trunkX);
+		trunk.setAttribute('y2', lerp(anchor.current.y, topTarget + totalH));
+		g.appendChild(trunk);
+	}
+
+	// One row per member: branch line + tip circle + label + hit rect.
+	members.forEach((m, i) => {
+		const yTarget = topTarget + i * rowH;
+		const y       = lerp(anchor.current.y, yTarget);
+
+		// Branch segment from trunk out to the tip circle.
+		const branch = document.createElementNS(NS, 'line');
+		branch.setAttribute('class', 'peek-edge');
+		branch.setAttribute('x1', trunkX);
+		branch.setAttribute('y1', y);
+		branch.setAttribute('x2', trunkX + branchDx);
+		branch.setAttribute('y2', y);
+		g.appendChild(branch);
+
+		// Tip circle, matching the tree's convention:
+		//   solid  = supertree leaf (terminal taxon)
+		//   hollow = internal node in the supertree (has more descendants)
+		// Prefer the explicit supertree_leaf flag from others.php; fall back
+		// to the weight heuristic if older side-car files don't carry it.
+		const circle = document.createElementNS(NS, 'circle');
+		const isLeaf = ('supertree_leaf' in m) ? !!m.supertree_leaf : ((m.weight || 0) <= 1);
+		circle.setAttribute('class', isLeaf ? 'peek-node-solid' : 'peek-node-hollow');
+		circle.setAttribute('cx', trunkX + branchDx + circleR);
+		circle.setAttribute('cy', y);
+		circle.setAttribute('r',  circleR);
+		g.appendChild(circle);
+
+		// Hit rect sits behind the label for easier clicking; sibling order
+		// matters for the :hover + .peek-label selector in CSS.
+		const hit = document.createElementNS(NS, 'rect');
+		hit.setAttribute('class', 'peek-hit');
+		hit.setAttribute('x', textX);
+		hit.setAttribute('y', y - rowH / 2);
+		hit.setAttribute('width',  backW - branchDx - circleR - padX);
+		hit.setAttribute('height', rowH);
+		hit.addEventListener('click', (ev) => {
+			ev.stopPropagation();
+			// v1: peek only. Later hook: focus-on navigation.
+			console.log('peek select', m);
+		});
+		g.appendChild(hit);
+
+		const text = document.createElementNS(NS, 'text');
+		text.setAttribute('class', 'peek-label');
+		text.setAttribute('x', textX);
+		text.setAttribute('y', y + 2);
+		text.textContent = m.label;
+		g.appendChild(text);
+	});
+
+	svg.appendChild(g);
+}
+
+// Dismiss on outside-click or Escape.
+document.addEventListener('click', (ev) => {
+	if (!peekState) return;
+	if (ev.target.closest('#peek-overlay'))     return;
+	if (ev.target.closest('g[data-peekable]'))  return;
+	closePeek();
+});
+document.addEventListener('keydown', (ev) => {
+	if (ev.key === 'Escape') closePeek();
+});
 
 // ─── Animation Controls ─────────────────────────────────────────────────────
 
