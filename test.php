@@ -58,9 +58,10 @@ function preorder($node, $key = 'children', $focal_id = null)
 		{
 			$oclass = node_class($other, false);
 			echo '<li class="' . $oclass . '">' . "\n";
-			echo '<span id="node' . htmlspecialchars($other->id) . '"'
-				. ' onclick="go(\'' . htmlspecialchars($other->id) . '\')"'
-				. ' ondblclick="reload(\'' . htmlspecialchars($other->id) . '\')">';
+			$other_ext = isset($other->external_id) ? $other->external_id : $other->id;
+			echo '<span id="node' . htmlspecialchars($other_ext) . '"'
+				. ' onclick="go(\'' . htmlspecialchars($other_ext) . '\')"'
+				. ' ondblclick="reload(\'' . htmlspecialchars($other_ext) . '\')">';
 			echo htmlspecialchars($other->name);
 			echo node_badge($other);
 			echo '</span>' . "\n";
@@ -71,9 +72,10 @@ function preorder($node, $key = 'children', $focal_id = null)
 	}
 	else
 	{
-		echo '<span id="node' . htmlspecialchars($node->id) . '"'
-			. ' onclick="go(\'' . htmlspecialchars($node->id) . '\')"'
-			. ' ondblclick="reload(\'' . htmlspecialchars($node->id) . '\')">';
+		$node_ext = isset($node->external_id) ? $node->external_id : $node->id;
+		echo '<span id="node' . htmlspecialchars($node_ext) . '"'
+			. ' onclick="go(\'' . htmlspecialchars($node_ext) . '\')"'
+			. ' ondblclick="reload(\'' . htmlspecialchars($node_ext) . '\')">';
 		echo htmlspecialchars($node->name);
 		echo node_badge($node);
 		echo '</span>' . "\n";
@@ -97,7 +99,21 @@ function preorder($node, $key = 'children', $focal_id = null)
 $db  = new PDO('sqlite:' . dirname(__FILE__) . '/ott.db');
 $ott = new OttTree($db);
 
-$id   = isset($_GET['taxon']) ? (int)$_GET['taxon'] : 631538; // Pterodroma
+// Accept ?taxon=ott838239 (preferred, matches the Open Tree of Life viewer) or
+// a raw internal tree id (back-compat). Default: Pterodroma.
+$default_external = 'ott838239';
+$taxon_param = isset($_GET['taxon']) ? trim($_GET['taxon']) : $default_external;
+
+$id = $ott->get_id_by_external($taxon_param);
+if ($id === null && ctype_digit($taxon_param))
+{
+	$id = $taxon_param;
+}
+if ($id === null)
+{
+	$id = $ott->get_id_by_external($default_external);
+}
+
 $k    = isset($_GET['k'])     ? max(2, (int)$_GET['k']) : 20;
 $mode = (isset($_GET['mode']) && $_GET['mode'] === 'nodes') ? 'nodes' : 'leaves';
 
@@ -128,7 +144,7 @@ $focal_node               = $ott->get_node($focal_id);
 <html>
 <head>
 <meta charset="utf-8">
-<title>OTT viewer — <?php echo htmlspecialchars($focal_node->name); ?></title>
+<title>OTT viewer — <?php echo htmlspecialchars($focal_node->name); ?> (<?php echo htmlspecialchars(isset($focal_node->external_id) ? $focal_node->external_id : ''); ?>)</title>
 <style>
 body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 1em 2em; color: #222; }
 h1 { font-size: 1.4em; margin: 0 0 0.3em; }
@@ -164,7 +180,8 @@ function reload(id) {
 </script>
 </head>
 <body>
-<h1><?php echo htmlspecialchars($focal_node->name); ?></h1>
+<h1><?php echo htmlspecialchars($focal_node->name); ?>
+<small style="color:#888;font-weight:normal;font-size:0.7em;"><?php echo htmlspecialchars(isset($focal_node->external_id) ? $focal_node->external_id : ''); ?></small></h1>
 <?php if ($focal_id !== $displayed_root): ?>
 <p><small>focal taxon <?php echo htmlspecialchars($focal_node->name); ?>
 (weight <?php echo isset($focal_node->weight) ? (int)$focal_node->weight : '?'; ?>)
@@ -173,7 +190,7 @@ is smaller than k = <?php echo (int)$k; ?>; tree rooted at ancestor
 <?php endif; ?>
 
 <form method="get">
-	<label>taxon id: <input type="number" name="taxon" value="<?php echo (int)$id; ?>" style="width:8em"></label>
+	<label>ott id: <input type="text" name="taxon" value="<?php echo htmlspecialchars(isset($focal_node->external_id) ? $focal_node->external_id : (string)$id); ?>" style="width:8em" placeholder="ott452461"></label>
 	<label>k: <input type="number" name="k" value="<?php echo (int)$k; ?>" min="2" max="500" style="width:5em"></label>
 	<label>mode:
 		<select name="mode">
@@ -211,8 +228,9 @@ for ($i = $num_levels_back - 1; $i >= 0; $i--)
 
 foreach ($stack as $path_node)
 {
+	$path_taxon = isset($path_node->external_id) ? $path_node->external_id : $path_node->id;
 	echo '<ul>' . "\n";
-	echo '<li><a href="?taxon=' . (int)$path_node->id . '&k=' . (int)$k . '&mode=' . htmlspecialchars($mode) . '">'
+	echo '<li><a href="?taxon=' . htmlspecialchars($path_taxon) . '&k=' . (int)$k . '&mode=' . htmlspecialchars($mode) . '">'
 		. htmlspecialchars($path_node->name) . '</a>' . "\n";
 }
 
