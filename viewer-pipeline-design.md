@@ -162,7 +162,14 @@ click(nodeId) →
 - **Vertical group bars.** Clade span rendering (min/max y of descendants
   at a given x, with an optional label). Layout pass can emit these as
   auxiliary objects; transition logic handles them like nodes
-  (interpolate endpoints).
+  (interpolate endpoints). Likely primary use is a gutter column to the
+  right of the tip labels, one bracket + clade name per selected internal
+  node, replacing in-tree internal labels. Requires a partitioning step so
+  brackets don't nest — candidates are named clades, filtered by a
+  weight band (e.g. 3–50 tips) by default so singletons and mega-clades
+  drop out. Multiple partitions (e.g. genus + family) = multiple columns.
+  Labels should be click-to-focus — biggest UX win, turns the gutter into
+  a navigation index.
 
 ## Open questions
 
