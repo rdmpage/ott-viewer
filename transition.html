@@ -10,7 +10,9 @@ svg { border: 1px solid #ccc; display: block; background: #fafafa; flex: 1 1 0; 
 .controls { margin: 0.5em 0; }
 button { padding: 0.3em 1em; margin-right: 0.5em; }
 input[type=range] { width: 300px; vertical-align: middle; }
-.label { font-size: 7px; }
+/* font-size is set via attribute from JS (STYLE.labelFontSize) so it can
+   scale proportionally with annotation sizes and offsets. */
+.label { }
 .legend { font-size: 13px; margin-top: 0.5em; }
 .legend span { display: inline-block; width: 12px; height: 12px; border-radius: 50%;
                vertical-align: middle; margin-right: 4px; }
@@ -27,6 +29,13 @@ input[type=range] { width: 300px; vertical-align: middle; }
 .peek-backdrop { fill: rgba(255,255,255,0.78); stroke: none; }
 .peek-node-solid  { fill: #b36b00; }
 .peek-node-hollow { fill: white; stroke: #b36b00; stroke-width: 1; }
+
+/* Node annotations: "supported / resolves" above the incoming edge, "conflicts"
+   below it, both right-aligned just left of the node circle. Mirrors the OTT
+   convention. Hidden when both counts are zero.
+   font-size comes from STYLE.annotFontSize in JS. */
+.annot-support  { fill: #222; }
+.annot-conflict { fill: #a33; }
 </style>
 </head>
 <body>
@@ -215,8 +224,41 @@ function updateScene(scene, t) {
 const svg = document.getElementById('canvas');
 const NS = 'http://www.w3.org/2000/svg';
 
+// ─── Style constants ────────────────────────────────────────────────────────
+// Node-label font size is the base; other sizes + offsets are derived from it
+// so scaling the labels scales the annotations and their placement in sync.
+// Positions are in the node <g>'s local coord space (origin at the node circle).
+const LABEL_FONT = 7;      // tree tip / internal labels
+const NODE_R     = 2.5;    // node circle radius
+const STYLE = {
+	labelFontSize: LABEL_FONT,
+	annotFontSize: LABEL_FONT - 0.5,        // slightly smaller than labels
+	circleR:       NODE_R,
+	labelDx:       NODE_R + 2.5,            // label x: past circle + small gap
+	labelDy:       LABEL_FONT * 0.30,       // label baseline offset: vertical centering on circle
+	annotDx:      -(NODE_R + 3.5),          // annotations right-aligned here, left of circle
+	annotUpDy:    -(LABEL_FONT * 0.30),     // upper number: above incoming edge line
+	annotDnDy:     LABEL_FONT + 1,          // lower number: below incoming edge line with clearance
+};
+
 function clearSVG() {
 	while (svg.firstChild) svg.removeChild(svg.firstChild);
+}
+
+// Placeholder annotation generator: deterministic per node id so the numbers
+// don't jiggle between frames. A chunk of nodes return null to preview the
+// "no data" case (taxonomy-only). Real data will come from the annotations
+// table via the server endpoint.
+function fakeAnnotation(nodeId) {
+	let h = 0;
+	for (let i = 0; i < nodeId.length; i++) h = ((h << 5) - h + nodeId.charCodeAt(i)) | 0;
+	h = Math.abs(h);
+	if (h % 7 === 0) return null;            // ~14% of nodes have no annotations
+	return {
+		supported: h % 18,
+		resolves:  (h >> 3) % 6,
+		conflicts: (h >> 7) % 5,
+	};
 }
 
 function kindColor(kind) {
@@ -270,7 +312,7 @@ function render(scene) {
 		else                         isTip = currentT < 0.5 ? n.isTipOld : n.isTipNew;
 
 		const circle = document.createElementNS(NS, 'circle');
-		circle.setAttribute('r', '2.5');
+		circle.setAttribute('r', STYLE.circleR);
 		// Circle rule:
 		//   solid  = node is internal in this view, OR is a supertree leaf
 		//   hollow = tip in this view but the supertree has more descendants
@@ -293,8 +335,9 @@ function render(scene) {
 		// Show labels for all tips; hide mrca labels on internal nodes only
 		if (isTip || !looksMrca) {
 			const text = document.createElementNS(NS, 'text');
-			text.setAttribute('x', '5');
-			text.setAttribute('y', '2');
+			text.setAttribute('x', STYLE.labelDx);
+			text.setAttribute('y', STYLE.labelDy);
+			text.setAttribute('font-size', STYLE.labelFontSize);
 			text.setAttribute('class', 'label');
 			text.setAttribute('data-node-id', n.id);
 			text.setAttribute('fill', kindColor(n.kind));
@@ -308,6 +351,35 @@ function render(scene) {
 			}
 			text.textContent = display;
 			g.appendChild(text);
+		}
+
+		// Annotation numbers (support + conflict) on internal, non-other_ nodes.
+		// Placeholder values for now — real data will come from the annotations
+		// table keyed by external_id.
+		if (!isTip && !n.label.startsWith('other_')) {
+			const a = fakeAnnotation(n.id);
+			if (a) {
+				if (a.supported + a.resolves > 0) {
+					const up = document.createElementNS(NS, 'text');
+					up.setAttribute('class', 'annot-support');
+					up.setAttribute('x', STYLE.annotDx);
+					up.setAttribute('y', STYLE.annotUpDy);
+					up.setAttribute('font-size', STYLE.annotFontSize);
+					up.setAttribute('text-anchor', 'end');
+					up.textContent = a.supported + '/' + a.resolves;
+					g.appendChild(up);
+				}
+				if (a.conflicts > 0) {
+					const dn = document.createElementNS(NS, 'text');
+					dn.setAttribute('class', 'annot-conflict');
+					dn.setAttribute('x', STYLE.annotDx);
+					dn.setAttribute('y', STYLE.annotDnDy);
+					dn.setAttribute('font-size', STYLE.annotFontSize);
+					dn.setAttribute('text-anchor', 'end');
+					dn.textContent = a.conflicts;
+					g.appendChild(dn);
+				}
+			}
 		}
 
 		// Make "other_" nodes peekable: click opens an SVG polytomy fanning
