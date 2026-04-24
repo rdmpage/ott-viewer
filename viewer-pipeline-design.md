@@ -38,68 +38,118 @@ already on the README's to-do.
 
 ## JSON schema
 
-Flat shape, matching the current `transition.html` assumptions (it needs
-`nodeById` lookups and parent climbs through edges):
+`nodes` is a map keyed by node id (the OTT external_id for real taxa, a
+synthetic `other_<parent_id>` for collapsed-sibling placeholders). Map
+form makes edge-source/target lookups direct (no index build) and JS
+preserves insertion order on non-integer keys, so canonical (nleft) tip
+order is implied by emission order. `edges` is a flat list of
+`{source, target}` pairs referencing those keys.
 
 ```json
 {
-  "nodes": [
-    {
-      "id":             "631366",
-      "external_id":    "ott452461",
-      "label":          "mrcaott18206ott18209",
+  "focal_id":          "ott49103",
+  "displayed_root_id": "mrcaott18206ott31011",
+  "nodes": {
+    "ott452461": {
+      "id":             "ott452461",
+      "display":        "Procellariiformes",
+      "type":           "internal",
+      "supertree_leaf": false,
+      "weight":         231,
+      "x":              14.3,
+      "y":              137.5,
+      "annotations": {
+        "supported_by":    ["ot_123@tree1", "ot_456@tree2"],
+        "terminal":        [],
+        "resolves":        ["ot_789@tree3"],
+        "conflicts_with":  [],
+        "partial_path_of": ["ot_123@tree4"]
+      }
+    },
+    "mrcaott18206ott18209": {
+      "id":             "mrcaott18206ott18209",
       "display":        "Oceanites gracilis galapagoensis + Fregetta grallaria titan",
       "type":           "internal",
       "supertree_leaf": false,
       "weight":         21,
       "x":              171.4,
       "y":              8.6,
-      "annotations":    { }
+      "annotations":    { "supported_by": [], "terminal": [], "resolves": [],
+                          "conflicts_with": [], "partial_path_of": [] }
     },
-    {
-      "id":      "other_631366",
-      "type":    "other",
+    "other_mrcaott18206ott18209": {
+      "id":      "other_mrcaott18206ott18209",
       "display": "other Oceanites gracilis galapagoensis + Fregetta grallaria titan",
+      "type":    "other",
       "x":       200,
       "y":       13.8,
       "members": [
-        { "id": "631401", "external_id": "ott6155057", "label": "Oceanites pincoyae",
-          "display": "Oceanites pincoyae", "weight": 1, "supertree_leaf": true }
+        {
+          "id":             "ott6155057",
+          "display":        "Oceanites pincoyae",
+          "type":           "leaf",
+          "supertree_leaf": true,
+          "weight":         1,
+          "annotations":    { "supported_by": [], "terminal": [...], "resolves": [],
+                              "conflicts_with": [], "partial_path_of": [] }
+        }
       ]
     }
-  ],
+  },
   "edges": [
-    { "source": "631365", "target": "631366" }
+    { "source": "mrcaott18206ott31011", "target": "mrcaott18206ott18209" }
   ]
 }
 ```
 
 ### Key decisions
 
-1. **Stable internal ids, not labels, as `node.id`.** The current JSON uses
-   the prettified label as id. That's fragile — the same mrca pair
-   appears in multiple contexts, which causes false persistence matches
-   in the transition. Use DB id (or external_id for named taxa) as the
-   stable key. The transition lookup `oldById[id]` / `newById[id]` then
-   matches only when it's really the same node.
+1. **`id` is the OTT external_id.** Stable, unique, already used in URLs
+   and in the DB. Edge `source`/`target` reference these directly. No
+   separate internal numeric id surfaces in the JSON. Synthetic
+   `other_<parent_id>` keys for collapsed-sibling placeholders are the
+   one exception — the viewer special-cases them (you can't `focus_on`
+   an `other_*`; clicking inside the peek navigates to a member).
 
-2. **Separate `label` (raw) from `display` (pretty).** Raw preserves the
-   round-trip to Newick/parser; pretty is what the user reads. Renderer
-   picks `display`, and the internal-node-hiding heuristic checks the
-   label/type, not `display`.
+2. **No `label`. Just `id` + `display`.** `id` is the canonical short
+   form (e.g. `ott452461`, `mrcaott18206ott18209`). `display` is the
+   human-friendly text — the prettified `<X> + <Y>` for mrca nodes, the
+   taxon name otherwise. Heuristics that previously checked `label`
+   (e.g. `startsWith('mrca')`) check `id` instead.
 
-3. **Inline `other_` members on the node itself.** `members: [...]`
-   lives on the `other_` node object, not in a side-car map. One
-   request, one file, one source of truth.
+3. **`type` enum + `supertree_leaf` flag, not three booleans.**
+   - `type`: `"internal" | "leaf" | "other"` — the node's role in the
+     current view. Drives label visibility, circle solidity rules, peek
+     availability.
+   - `supertree_leaf`: `bool` — is this a true terminal in the
+     supertree (no children in the DB)? Drives solid vs hollow.
 
-4. **`type` field, not heuristics.** `"internal" | "leaf" | "other"` —
-   drives circle style, label visibility, and peek behaviour. Removes
-   the current `.includes(' + ')` / `.startsWith('mrca')` string
-   sniffing in `transition.html`.
+   The four states the user might think in (internal-in-view,
+   supertree-leaf, collapsed-internal, other) decompose cleanly:
+   `type=internal`, `type=leaf & supertree_leaf=true`, `type=leaf &
+   supertree_leaf=false`, `type=other`. No invariant ("exactly one is
+   true") needed per consumer.
 
-5. **`annotations` is an opaque sub-object.** Extinct flag, phylogenetic
-   support, source tree provenance — all go here. Adding fields never
-   breaks the viewer.
+4. **Inline `other_` members on the node itself.** `members: [...]`
+   lives on the `other_` node object, not in a side-car map. Same field
+   shape as a top-level node minus `x`/`y` (members aren't laid out).
+   Members carry their own annotations so the peek panel can show
+   per-taxon evidence, eventually.
+
+5. **Annotations: full lists of tree ids per relation.** Five
+   relations: `supported_by`, `terminal`, `resolves`, `conflicts_with`,
+   `partial_path_of`. Display counts (distinct study) are computed
+   client-side. Lists let detail views show tree provenance later. At
+   very large scale these inflate the payload — when that becomes a
+   problem, switch to pre-aggregated counts plus an on-demand endpoint
+   for the lists. Not v1's problem. `other_` nodes themselves carry no
+   annotations (synthetic placeholders); their members do.
+
+6. **`focal_id` and `displayed_root_id` at the top level.** The two
+   diverge when `focus_on` climbs up because `tips(focal) < k`. The
+   viewer needs both: `focal` for the user-aimed-at point (used as the
+   enter-anchor in transitions, and for highlighting); `displayed_root`
+   for layout / breadcrumb / "tree rooted at" context.
 
 ### Circle rule (already documented)
 
