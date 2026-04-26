@@ -6,7 +6,7 @@
 <style>
 html, body { height: 100%; margin: 0; overflow: hidden; }
 body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; padding: 0.5em 2em; display: flex; flex-direction: column; box-sizing: border-box; }
-svg { border: 1px solid #ccc; display: block; background: #fafafa; flex: 1 1 0; min-height: 0; width: 100%; }
+svg { border: 1px solid #ccc; display: block; flex: 1 1 0; min-height: 0; width: 100%; }
 .controls { margin: 0.5em 0; }
 button { padding: 0.3em 1em; margin-right: 0.5em; }
 input[type=range] { width: 300px; vertical-align: middle; }
@@ -63,36 +63,63 @@ input[type=range] { width: 300px; vertical-align: middle; }
 <svg id="canvas" preserveAspectRatio="xMinYMid meet"></svg>
 
 <script>
-// ─── Trees (loaded from tree1.json and tree2.json) ──────────────────────────
+// ─── Trees (fetched live from tree.php) ─────────────────────────────────────
+// Each tree is the canonical viewer JSON: { focal_id, displayed_root_id,
+// nodes: { <id>: {...}, ... }, edges: [...] }. Members of "other_" nodes are
+// inline on the node (no more side-car files).
 let t1 = null, t2 = null;
-// Member lists for "other_" summary nodes, keyed by node id. Optional — if
-// the side-car files are absent the peek panel just won't open. Produced by
-// others.php (one JSON per tree view).
-let others1 = null, others2 = null;
 
 async function loadTrees() {
-	const [r1, r2, o1, o2] = await Promise.all([
-		fetch('tree1.json'),
-		fetch('tree2.json'),
-		fetch('others1.json').catch(() => null),
-		fetch('others2.json').catch(() => null),
+	const [r1, r2] = await Promise.all([
+		fetch('tree.php?taxon=ott452461&k=30'),
+		fetch('tree.php?taxon=mrcaott18206ott18209&k=30'),
 	]);
 	t1 = await r1.json();
 	t2 = await r2.json();
-	if (o1 && o1.ok) others1 = await o1.json();
-	if (o2 && o2.ok) others2 = await o2.json();
 	init();
 }
 
 // ─── Build Transition Scene ─────────────────────────────────────────────────
 
 function buildScene(oldTree, newTree) {
-	const yScale = 1.8; // vertical spacing multiplier (increase to spread nodes apart)
+	// Coordinates come in a 100x100 grid from coordinates.php; the natural
+	// content aspect (treeW + labelMargin) : treeH is usually ~3:1, much
+	// wider than a typical browser. Stretch y so the viewBox aspect matches
+	// the SVG element's pixel aspect — that's the "fit the browser window"
+	// step. SVG circles stay circular because we're scaling within coord
+	// space, not via preserveAspectRatio.
+	let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+	let longestLabel = 0;
+	[oldTree, newTree].forEach(tree => {
+		Object.values(tree.nodes).forEach(n => {
+			if (n.x < minX) minX = n.x;
+			if (n.x > maxX) maxX = n.x;
+			if (n.y < minY) minY = n.y;
+			if (n.y > maxY) maxY = n.y;
+			if (n.display.length > longestLabel) longestLabel = n.display.length;
+		});
+	});
+	const charW       = STYLE.labelFontSize * 0.5;
+	const labelMargin = longestLabel * charW;
+	const treeW       = maxX - minX;
+	const treeH       = maxY - minY;
+	const totalW      = treeW + labelMargin;
+
+	const px            = svg.clientWidth  || 1000;
+	const py            = svg.clientHeight || 600;
+	const browserAspect = px / py;
+
+	// Stretch y up to fill, never compress (compression makes tip rows
+	// unreadable). yScale=1 keeps the source 100×100 grid intact.
+	let yScale = 1;
+	if (treeH > 0) {
+		yScale = Math.max(1, (totalW / browserAspect) / treeH);
+	}
 
 	const oldById = {};
-	oldTree.nodes.forEach(n => { oldById[n.id] = { ...n, y: n.y * yScale }; });
+	Object.values(oldTree.nodes).forEach(n => { oldById[n.id] = { ...n, y: n.y * yScale }; });
 	const newById = {};
-	newTree.nodes.forEach(n => { newById[n.id] = { ...n, y: n.y * yScale }; });
+	Object.values(newTree.nodes).forEach(n => { newById[n.id] = { ...n, y: n.y * yScale }; });
 
 	// Parent lookup (child → parent id)
 	const oldParent = {};
@@ -125,38 +152,41 @@ function buildScene(oldTree, newTree) {
 
 	// ── Nodes ──
 	const allIds = new Set([
-		...oldTree.nodes.map(n => n.id),
-		...newTree.nodes.map(n => n.id)
+		...Object.keys(oldTree.nodes),
+		...Object.keys(newTree.nodes)
 	]);
 
 	const nodes = [];
 	allIds.forEach(id => {
 		const inOld = id in oldById;
 		const inNew = id in newById;
-		let kind, from, to, fromOpacity, toOpacity, label;
+		// Carry over all fields (display, type, supertree_leaf, weight,
+		// annotations, members, ...) from the source node so render() can
+		// read them without touching t1 / t2 again. Use the new-tree side
+		// for persist nodes so the rendered state matches the destination.
+		const src = inNew ? newById[id] : oldById[id];
 
+		let kind, from, to, fromOpacity, toOpacity;
 		if (inOld && inNew) {
 			kind = 'persist';
 			from = { x: oldById[id].x, y: oldById[id].y };
 			to   = { x: newById[id].x, y: newById[id].y };
 			fromOpacity = 1; toOpacity = 1;
-			label = newById[id].label || id;
 		} else if (inOld) {
 			kind = 'exit';
 			from = { x: oldById[id].x, y: oldById[id].y };
 			to   = exitAnchor(id);
 			fromOpacity = 1; toOpacity = 0;
-			label = oldById[id].label || id;
 		} else {
 			kind = 'enter';
 			from = enterAnchor(id);
 			to   = { x: newById[id].x, y: newById[id].y };
 			fromOpacity = 0; toOpacity = 1;
-			label = newById[id].label || id;
 		}
 
 		nodes.push({
-			id, label, kind,
+			...src,
+			kind,
 			from, to,
 			current: { x: from.x, y: from.y },
 			fromOpacity, toOpacity,
@@ -245,20 +275,23 @@ function clearSVG() {
 	while (svg.firstChild) svg.removeChild(svg.firstChild);
 }
 
-// Placeholder annotation generator: deterministic per node id so the numbers
-// don't jiggle between frames. A chunk of nodes return null to preview the
-// "no data" case (taxonomy-only). Real data will come from the annotations
-// table via the server endpoint.
-function fakeAnnotation(nodeId) {
-	let h = 0;
-	for (let i = 0; i < nodeId.length; i++) h = ((h << 5) - h + nodeId.charCodeAt(i)) | 0;
-	h = Math.abs(h);
-	if (h % 7 === 0) return null;            // ~14% of nodes have no annotations
-	return {
-		supported: h % 18,
-		resolves:  (h >> 3) % 6,
-		conflicts: (h >> 7) % 5,
+// Reduce a node's annotation lists (study_tree ids like "ot_123@tree1") to
+// distinct-study counts. Study id = the part before "@". Only the two
+// counts shown on the tree are extracted here — the more nuanced relations
+// (terminal, resolves, partial_path_of) live on the JSON and surface in a
+// future per-node info panel. Returns null when the node has neither
+// support nor conflict, so the renderer can hide cleanly.
+function nodeAnnotation(n) {
+	if (!n || !n.annotations) return null;
+	const distinct = list => {
+		const s = new Set();
+		(list || []).forEach(t => s.add(t.split('@')[0]));
+		return s.size;
 	};
+	const supported = distinct(n.annotations.supported_by);
+	const conflicts = distinct(n.annotations.conflicts_with);
+	if (supported + conflicts === 0) return null;
+	return { supported, conflicts };
 }
 
 function kindColor(kind) {
@@ -319,9 +352,10 @@ function render(scene) {
 		// If the JSON carries an explicit supertree_leaf flag (future pipeline)
 		// we trust it; otherwise fall back to the label heuristic (any "mrca"-ish
 		// label is assumed not to be a supertree leaf).
-		const looksMrca = n.label.startsWith('mrca')
-			|| n.label.startsWith('other_mrca')
-			|| n.label.includes(' + ');
+		// "Anonymous" internals carry mrca-style ids — used for hollow circle
+		// rule and label hiding. The id is the canonical short form so we
+		// don't need to sniff the prettified display string.
+		const looksMrca = n.id.startsWith('mrca') || n.id.startsWith('other_mrca');
 		const isSupertreeLeaf = ('supertree_leaf' in n) ? !!n.supertree_leaf : !looksMrca;
 		if (isTip && !isSupertreeLeaf) {
 			circle.setAttribute('fill', 'white');
@@ -344,10 +378,10 @@ function render(scene) {
 			// For "other_" summary nodes, append a (count) affordance so the
 			// user can see how many taxa hide inside before clicking. Count
 			// comes from the peek data (if loaded).
-			let display = n.label;
-			if (n.label.startsWith('other_')) {
-				const members = peekMembers(n.label);
-				if (members) display = n.label + ' (' + members.length + ')';
+			let display = n.display;
+			if (n.id.startsWith('other_')) {
+				const members = peekMembers(n.id);
+				if (members) display = display + ' (' + members.length + ')';
 			}
 			text.textContent = display;
 			g.appendChild(text);
@@ -356,17 +390,17 @@ function render(scene) {
 		// Annotation numbers (support + conflict) on internal, non-other_ nodes.
 		// Placeholder values for now — real data will come from the annotations
 		// table keyed by external_id.
-		if (!isTip && !n.label.startsWith('other_')) {
-			const a = fakeAnnotation(n.id);
+		if (!isTip && !n.id.startsWith('other_')) {
+			const a = nodeAnnotation(n);
 			if (a) {
-				if (a.supported + a.resolves > 0) {
+				if (a.supported > 0) {
 					const up = document.createElementNS(NS, 'text');
 					up.setAttribute('class', 'annot-support');
 					up.setAttribute('x', STYLE.annotDx);
 					up.setAttribute('y', STYLE.annotUpDy);
 					up.setAttribute('font-size', STYLE.annotFontSize);
 					up.setAttribute('text-anchor', 'end');
-					up.textContent = a.supported + '/' + a.resolves;
+					up.textContent = a.supported;
 					g.appendChild(up);
 				}
 				if (a.conflicts > 0) {
@@ -384,12 +418,12 @@ function render(scene) {
 
 		// Make "other_" nodes peekable: click opens an SVG polytomy fanning
 		// out from the node, listing the taxa collapsed inside.
-		if (n.label.startsWith('other_')) {
+		if (n.id.startsWith('other_')) {
 			g.setAttribute('data-peekable', '1');
 			g.style.cursor = 'pointer';
 			g.addEventListener('click', (ev) => {
 				ev.stopPropagation();
-				openPeek(n.label);
+				openPeek(n.id);
 			});
 		}
 
@@ -410,13 +444,16 @@ let peekOpenedAt = 0;
 let peekAnimId   = null;
 const PEEK_DURATION = 260;   // ms for the accordion expansion
 
-// Pick the members list for a node id. Prefers the side matching the current
+// Pick the members list for a node id, looked up directly on the node object
+// in whichever tree contains it. Prefers the side matching the current
 // animation phase; falls back to the other side so enter/exit nodes still peek.
 function peekMembers(nodeId) {
-	const primary   = currentT < 0.5 ? others1 : others2;
-	const secondary = currentT < 0.5 ? others2 : others1;
-	if (primary   && primary[nodeId])   return primary[nodeId];
-	if (secondary && secondary[nodeId]) return secondary[nodeId];
+	const primary   = currentT < 0.5 ? t1 : t2;
+	const secondary = currentT < 0.5 ? t2 : t1;
+	const fromPrimary   = primary   && primary.nodes   && primary.nodes[nodeId];
+	if (fromPrimary   && fromPrimary.members)   return fromPrimary.members;
+	const fromSecondary = secondary && secondary.nodes && secondary.nodes[nodeId];
+	if (fromSecondary && fromSecondary.members) return fromSecondary.members;
 	return null;
 }
 
@@ -507,7 +544,7 @@ function renderPeek() {
 	const textX = trunkX + branchDx + circleR + circleToText;
 
 	// Backdrop width from the longest label.
-	const longest = members.reduce((acc, m) => Math.max(acc, m.label.length), 0);
+	const longest = members.reduce((acc, m) => Math.max(acc, m.display.length), 0);
 	const backW   = branchDx + circleR + circleToText + (longest * charW) + padX * 2;
 
 	const g = document.createElementNS(NS, 'g');
@@ -596,7 +633,7 @@ function renderPeek() {
 		text.setAttribute('class', 'peek-label');
 		text.setAttribute('x', textX);
 		text.setAttribute('y', y + 2);
-		text.textContent = m.label;
+		text.textContent = m.display;
 		g.appendChild(text);
 	});
 
@@ -627,9 +664,13 @@ function init() {
 }
 
 // Compute viewBox from all positions the scene will ever visit (from + to),
-// plus room for labels on the right.
+// plus room for the tip labels on the right (width estimated from the
+// longest actual label, so the gutter is data-driven, not hardcoded). The
+// browser maps this viewBox onto the SVG element's pixel size via
+// preserveAspectRatio="xMinYMid meet" (no distortion, may letterbox).
 function fitViewBox(scene) {
 	let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+	let longest = 0;
 	scene.nodes.forEach(n => {
 		for (const p of [n.from, n.to]) {
 			if (p.x < minX) minX = p.x;
@@ -637,9 +678,14 @@ function fitViewBox(scene) {
 			if (p.x > maxX) maxX = p.x;
 			if (p.y > maxY) maxY = p.y;
 		}
+		if (n.display.length > longest) longest = n.display.length;
 	});
-	const labelMargin = 200; // room for text to the right of tip nodes
-	const margin = 10;
+	const charW       = STYLE.labelFontSize * 0.5;  // ~half the font size per char
+	const labelMargin = longest * charW;
+	// Padding around the whole drawing equal to one label-line height — keeps
+	// the topmost / bottommost tip labels and annotation numbers from butting
+	// up against the SVG border.
+	const margin      = STYLE.labelFontSize;
 	const vx = minX - margin;
 	const vy = minY - margin;
 	const vw = (maxX - minX) + labelMargin + margin * 2;

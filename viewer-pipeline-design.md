@@ -224,8 +224,29 @@ click(nodeId) →
 ## Open questions
 
 - **K across navigations.** Does `k` stay constant when the user clicks
-  into a subtree, or does it adapt (e.g. scale with viewport)? Currently
-  it's a URL parameter — fine for now.
+  into a subtree, or does it adapt (e.g. scale with viewport)?
+  Decision (provisional): keep it as a URL parameter, constant across
+  click-to-focus navigations within a session. Adapt later if it turns
+  out k=30 is wrong for very large or very small viewports.
+
+- **Browser resize handling.** Currently `buildScene` measures the
+  SVG's pixel size once at `init()` and computes a `yScale` that makes
+  the viewBox aspect match the browser aspect (the "fit the window"
+  step). Resizing the browser later does not re-run this — CSS rescales
+  the SVG element, but the viewBox aspect stays put, so a resize
+  reintroduces letterboxing (whitespace top/bottom or left/right). Fix
+  when annoying: a `window.addEventListener('resize', …)` that
+  re-runs `buildScene` + `fitViewBox` and re-applies the scene at the
+  current `t`. Cheap; deferred until it actually matters.
+
+- **Letterboxing as a tradeoff.** Tree+labels has a wide natural aspect
+  (~3:1 with long mrca-pair labels in a 100×100 grid). The viewer
+  stretches y to match the browser aspect at init time, which makes
+  circles still circular and tip rows generously spaced. Two known
+  edge cases: (a) very tall/narrow browsers — `yScale` is clamped to
+  ≥1 so tip rows never compress, but the tree may letterbox
+  horizontally; (b) post-resize — see above. Both are acceptable for
+  v1.
 
 - **Back navigation.** If clicking produces a transition forward, is
   there a "back" that reverses it? History stack of `(focal, k)` pairs
