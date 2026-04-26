@@ -86,8 +86,8 @@ class Node
 			}
 			echo $output . "\n";
 		}
-		echo "Attributes:\n";
-		print_r($this->attributes);
+		//echo "Attributes:\n";
+		//print_r($this->attributes);
 	}
 	
 	//----------------------------------------------------------------------------------------------
