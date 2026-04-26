@@ -196,6 +196,24 @@ click(nodeId) →
   appear in the same order in any view. Keep this invariant when the
   layout pass moves server-side.
 
+- **`other_*` displays drop the parent name when the parent is mrca.**
+  OTT's mrca convention names internal nodes `mrcaottXottY` where X and
+  Y are two arbitrary descendant tips that bracket the node. The same
+  tip can be picked as X (or Y) for several different mrca nodes at
+  different depths — e.g. across one `?taxon=ott853108` view we get
+  `mrcaott1488ott107463`, `mrcaott1488ott7487`, and
+  `mrcaott1488ott17016`, all with `ott1488` (Moupinia poecilotis) as
+  one bracket. Their prettified labels then all start with "Moupinia
+  poecilotis + …", which makes their `"other …"` placeholders read as
+  near-duplicates in the tree even though they sit at distinct
+  positions and contain disjoint members. So `tree.php` strips the
+  parent name from the `other_*` display whenever the parent's
+  external_id starts with `mrca`, leaving just `"other"` (the
+  count `(N)` is appended on the client). For named parents
+  (`Hirundinidae`, `Pterodroma`, …) the parent name is genuinely
+  informative and is kept. The peek list always reveals what's inside,
+  so no information is lost — just the misleading prefix.
+
 ## Deferred
 
 - **NHX parser fix** — teach `tree-parse.php` to attach `[&…]` comments

@@ -110,9 +110,19 @@ foreach ($nodes_map as $internal_id => $_name)
 
 		$other_id = 'other_' . $parent_ext;
 
+		// If the parent is an anonymous mrca node, its prettified label is
+		// "<tipA> + <tipB>" — and the same tipA can appear across many mrca
+		// nodes (the convention picks arbitrary descendants). That makes
+		// multiple "other_" placeholders look near-identical in the tree
+		// even though they sit at different levels. So we drop the parent
+		// name in that case and just show "other"; the peek list reveals
+		// what's actually inside. For named parents (Hirundinidae,
+		// Pterodroma, etc.) the parent name is genuinely informative and
+		// is kept.
+		$parent_is_mrca = (strpos((string)$parent_ext, 'mrca') === 0);
 		$obj = new stdClass;
 		$obj->id      = $other_id;
-		$obj->display = 'other ' . $parent_display;
+		$obj->display = $parent_is_mrca ? 'other' : ('other ' . $parent_display);
 		$obj->type    = 'other';
 		$obj->members = array();
 
