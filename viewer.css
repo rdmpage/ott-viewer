@@ -1,0 +1,75 @@
+html, body { height: 100%; margin: 0; overflow: hidden; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; padding: 0.5em 2em; display: flex; flex-direction: column; box-sizing: border-box; }
+svg { border: 1px solid #ccc; display: block; flex: 1 1 0; min-height: 0; width: 100%; }
+.controls { margin: 0.5em 0; }
+button { padding: 0.3em 1em; margin-right: 0.5em; }
+input[type=range] { width: 300px; vertical-align: middle; }
+/* font-size is set via attribute from JS (STYLE.labelFontSize) so it can
+   scale proportionally with annotation sizes and offsets. */
+.label { }
+
+/* Node circles are the hit target: cursor flips. Hover affordance is a
+   concentric ring (.tree-node-halo) drawn behind/around each node — see
+   below. We avoid animating SVG `r` via CSS because Safari's
+   implementation is glitchy (the circle can flash in and out of view).
+   Animating opacity on a halo is universal. */
+.tree-node {
+	cursor: pointer;
+}
+.tree-node-halo {
+	fill: none;
+	stroke: red;
+	opacity: 0;
+	pointer-events: none;
+	transition: opacity 0.12s ease;
+}
+.tree-node:hover ~ .tree-node-halo {
+	opacity: 1;
+}
+.legend { font-size: 13px; margin-top: 0.5em; }
+.legend span { display: inline-block; width: 12px; height: 12px; border-radius: 50%;
+               vertical-align: middle; margin-right: 4px; }
+
+/* Peek overlay: rendered inside the SVG as a polytomy fanning out from the
+   other_ node. A backdrop rect sits under the text labels so they stay legible
+   over the tree. Color matches the "other" convention used elsewhere.
+   Opacity + positions are animated per-frame from JS, not CSS, so nothing
+   conflicts when renderPeek redraws on every tick of the main animation. */
+/* Peek edges, circles, and labels share the tree's persist colour (#333)
+   so the list reads as part of the cladogram. peek-label has
+   pointer-events: none so clicks fall through to the .peek-hit rect
+   underneath. Hover bolds the label as the only interactive cue. */
+.peek-edge     { stroke: #333; stroke-width: var(--ott-stroke, 1); fill: none; }
+.peek-label    { fill: #333; pointer-events: none; }
+.peek-hit      { fill: transparent; cursor: pointer; }
+.peek-hit:hover + .peek-label { font-weight: 600; }
+.peek-backdrop { fill: rgba(255,255,255,0.78); stroke: none; }
+.peek-node-solid  { fill: #333; }
+.peek-node-hollow { fill: white; stroke: #333; stroke-width: var(--ott-hollow-stroke, 1); }
+
+/* Node annotations: "supported" above the incoming edge, "conflicts"
+   below it, both centered just left of the node circle. Mirrors the OTT
+   convention. Hidden when both counts are zero.
+   font-size comes from STYLE.annotFontSize in JS. */
+.annot-support  { fill: #222; }
+.annot-conflict { fill: #a33; }
+
+/* In-flight tree fetch indicator: a small spinning ring in the top-right
+   corner. Toggled via body.loading. Cursor over the SVG also flips to
+   "progress" so the user knows the click was received. */
+#loading {
+	position: fixed;
+	top: 1em;
+	right: 1em;
+	width: 18px;
+	height: 18px;
+	border: 2px solid #ddd;
+	border-top-color: #555;
+	border-radius: 50%;
+	animation: spin 0.8s linear infinite;
+	pointer-events: none;
+	display: none;
+	z-index: 1000;
+}
+body.loading #loading { display: block; }
+@keyframes spin { to { transform: rotate(360deg); } }
