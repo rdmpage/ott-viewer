@@ -174,6 +174,44 @@ foreach ($edges_map as $child_internal => $parent_internal)
 	$out->edges[] = $e;
 }
 
+// Stub node representing the supertree parent of the displayed root, for
+// upstream context. Added before layout so coordinates.php places it one
+// depth-step to the left of the displayed root with the same y (it has
+// only the displayed root as its child here, so the y inherits). Skipped
+// when the displayed root has no parent (i.e. is the supertree root).
+$root_supertree_node = $ott->get_node($displayed_root_internal);
+if (isset($root_supertree_node->parentTaxon) && $root_supertree_node->parentTaxon)
+{
+	$parent_internal = is_object($root_supertree_node->parentTaxon)
+		? $root_supertree_node->parentTaxon->id
+		: $root_supertree_node->parentTaxon;
+	$parent_node = $ott->get_node($parent_internal);
+	$parent_ext  = isset($parent_node->external_id)
+		? $parent_node->external_id
+		: (string)$parent_internal;
+
+	if (!isset($out->nodes->$parent_ext))
+	{
+		$stub = new stdClass;
+		$stub->id             = $parent_ext;
+		$stub->display        = isset($parent_node->name) ? $parent_node->name : $parent_ext;
+		// "stub" rather than "leaf" so the renderer's tip-spacing
+		// calculation (which only inspects "leaf" / "other") doesn't
+		// see the stub's y — the stub inherits its y from the displayed
+		// root and would otherwise collapse minStepY.
+		$stub->type           = 'stub';
+		$stub->supertree_leaf = false;
+		$stub->weight         = isset($parent_node->weight) ? (int)$parent_node->weight : 0;
+		$stub->annotations    = fetch_annotations($ann_stmt, $parent_ext);
+		$out->nodes->$parent_ext = $stub;
+
+		$stub_edge = new stdClass;
+		$stub_edge->source = $parent_ext;
+		$stub_edge->target = $out->displayed_root_id;
+		$out->edges[] = $stub_edge;
+	}
+}
+
 get_node_coordinates($out);
 
 echo json_encode($out, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);

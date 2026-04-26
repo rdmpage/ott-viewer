@@ -432,10 +432,10 @@ function render(scene) {
 			g.appendChild(text);
 		}
 
-		// Annotation numbers (support + conflict) on internal, non-other_ nodes.
-		// Placeholder values for now — real data will come from the annotations
-		// table keyed by external_id.
-		if (!isTip && !n.id.startsWith('other_')) {
+		// Annotation numbers (support + conflict) on internal, non-other_,
+		// non-stub nodes. Stubs are rendered as tip-shaped upstream context
+		// only, so their own evidence isn't relevant to this view.
+		if (!isTip && !n.id.startsWith('other_') && n.type !== 'stub') {
 			const a = nodeAnnotation(n);
 			if (a) {
 				const slotCenterX = STYLE.annotSlotRightDx - scene.minStepX / 2;
