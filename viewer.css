@@ -46,6 +46,9 @@ input[type=range] { width: 300px; vertical-align: middle; }
 .peek-backdrop { fill: rgba(255,255,255,0.78); stroke: none; }
 .peek-node-solid  { fill: #333; }
 .peek-node-hollow { fill: white; stroke: #333; stroke-width: var(--ott-hollow-stroke, 1); }
+/* Scroll indicator triangles — shown when the peek member list is
+   windowed (more rows above / below than fit in the visible band). */
+.peek-scroll-indicator { fill: #333; opacity: 0.5; pointer-events: none; }
 
 /* Node annotations: "supported" above the incoming edge, "conflicts"
    below it, both centered just left of the node circle. Mirrors the OTT

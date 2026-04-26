@@ -102,6 +102,16 @@ window.addEventListener('popstate', () => {
 
 // ─── Build Transition Scene ─────────────────────────────────────────────────
 
+// yScale is computed lazily on the first buildScene call and reused for
+// every subsequent transition. If we recomputed it each time, the new
+// tree's labels or y-range could nudge yScale by a few percent — and any
+// node persisting between trees would render at a slightly different
+// y-position than it had a frame ago, producing a visible flicker right
+// before the transition starts. Reusing the first value pins persisters
+// in place, at the cost of slightly less optimal fit if a later tree is
+// very differently shaped.
+let stableYScale = null;
+
 function buildScene(oldTree, newTree) {
 	// Coordinates come in a 100x100 grid from coordinates.php; the natural
 	// content aspect (treeW + labelMargin) : treeH is usually ~3:1, much
@@ -131,10 +141,17 @@ function buildScene(oldTree, newTree) {
 	const browserAspect = px / py;
 
 	// Stretch y up to fill, never compress (compression makes tip rows
-	// unreadable). yScale=1 keeps the source 100×100 grid intact.
-	let yScale = 1;
-	if (treeH > 0) {
-		yScale = Math.max(1, (totalW / browserAspect) / treeH);
+	// unreadable). yScale=1 keeps the source 100×100 grid intact. Cached
+	// on the first call so subsequent transitions don't shift persisters.
+	let yScale;
+	if (stableYScale !== null) {
+		yScale = stableYScale;
+	} else {
+		yScale = 1;
+		if (treeH > 0) {
+			yScale = Math.max(1, (totalW / browserAspect) / treeH);
+		}
+		stableYScale = yScale;
 	}
 
 	const oldById = {};
@@ -540,6 +557,7 @@ function render(scene) {
 let peekState    = null;
 let peekOpenedAt = 0;
 let peekAnimId   = null;
+let peekScroll   = 0;        // first visible member index when the list is windowed
 const PEEK_DURATION = 260;   // ms for the accordion expansion
 
 // Pick the members list for a node id, looked up directly on the node object
@@ -560,6 +578,7 @@ function openPeek(nodeId) {
 	if (!members || !members.length) return;
 	peekState    = { nodeId, members };
 	peekOpenedAt = performance.now();
+	peekScroll   = 0;
 	if (peekAnimId) cancelAnimationFrame(peekAnimId);
 	// Refresh the tree so the other_<...> label is hidden for the now-open
 	// node (and shown again for any previously-open one). render() will
@@ -592,7 +611,12 @@ function peekTick() {
 }
 
 // Draw (or redraw) the peek as an SVG group layered on top of the tree.
-// Items slide out from the anchor over PEEK_DURATION ms with an ease-out cubic.
+// Items slide out from the anchor over PEEK_DURATION ms with an ease-out
+// cubic. When the full member list would be taller than ~70% of the
+// viewBox, we render only a windowed slice: peekScroll is the index of
+// the first visible member, the wheel handler shifts it, and small
+// chevrons at the top / bottom of the visible band signal that there are
+// more rows in either direction.
 function renderPeek() {
 	if (!peekState) return;
 	const { nodeId, members } = peekState;
@@ -609,48 +633,50 @@ function renderPeek() {
 	const t     = 1 - Math.pow(1 - raw, 3);  // easeOutCubic
 	const lerp  = (a, b) => a + (b - a) * t;
 
-	// Layout constants — all derived from the (possibly capped) label font
-	// size and circle radius so the peek visually matches the tree on any
-	// viewport, no matter what capSizesForViewport has done to STYLE.
+	// Layout constants — derived from the viewport-capped font / circle so
+	// the peek matches the tree at any zoom level.
 	const font         = STYLE.labelFontSize;
 	const rowH         = font * 1.4;
-	const branchDx     = font;            // branch length: trunk -> tip circle
+	const branchDx     = font;
 	const circleR      = STYLE.circleR;
 	const circleToText = font * 0.6;
 	const padX         = font * 0.5;
 	const padY         = font * 0.3;
 	const charW        = font * 0.5;
 
-	// The peek anchors at the other_ node's circle so it reads as a local
-	// expansion of the tree (rather than something hovering past the label).
-	// The other_ node's text label is hidden while peek is open for that
-	// node — the members list shows what's inside, so the "other_X (N)"
-	// tag would just be clutter.
 	const trunkX = anchor.current.x + circleR + branchDx;
 
-	// Target geometry (fully-expanded positions).
-	const count  = members.length;
-	const totalH = Math.max(0, (count - 1) * rowH);
-	let topTarget = anchor.current.y - totalH / 2;
+	// Windowing: how many rows fit into the height budget?
+	const vb           = svg.viewBox.baseVal;
+	const maxRowsByVB  = Math.max(2, Math.floor((vb.height * 0.70) / rowH));
+	const totalRows    = members.length;
+	const visibleRows  = Math.min(totalRows, maxRowsByVB);
+	const windowed     = visibleRows < totalRows;
 
-	const vb   = svg.viewBox.baseVal;
-	const minY = vb.y + 4;
-	const maxY = vb.y + vb.height - 4 - totalH;
-	if (topTarget < minY) topTarget = minY;
-	if (topTarget > maxY) topTarget = maxY;
+	// Clamp scroll offset.
+	if (peekScroll < 0) peekScroll = 0;
+	if (peekScroll > totalRows - visibleRows) peekScroll = totalRows - visibleRows;
+
+	// Target geometry of the visible band.
+	const totalH    = Math.max(0, (visibleRows - 1) * rowH);
+	let topTarget   = anchor.current.y - totalH / 2;
+	const minY      = vb.y + padY * 2;
+	const maxYClamp = vb.y + vb.height - padY * 2 - totalH;
+	if (topTarget < minY)      topTarget = minY;
+	if (topTarget > maxYClamp) topTarget = maxYClamp;
 
 	const textX = trunkX + branchDx + circleR + circleToText;
 
-	// Backdrop width from the longest label.
+	// Backdrop width based on the longest *visible* label (the windowed
+	// case might exclude some long labels, but the difference is minor).
 	const longest = members.reduce((acc, m) => Math.max(acc, m.display.length), 0);
 	const backW   = branchDx + circleR + circleToText + (longest * charW) + padX * 2;
 
 	const g = document.createElementNS(NS, 'g');
 	g.setAttribute('id', 'peek-overlay');
-	g.setAttribute('opacity', t);  // fade in with the expansion
+	g.setAttribute('opacity', t);
 
-	// Backdrop interpolates y-extent from a thin strip at the anchor to the
-	// full list height.
+	// Backdrop.
 	const backTop    = lerp(anchor.current.y - rowH / 2, topTarget - rowH / 2 - padY);
 	const backHeight = lerp(rowH, totalH + padY * 2 + rowH);
 	const back = document.createElementNS(NS, 'rect');
@@ -662,9 +688,7 @@ function renderPeek() {
 	back.setAttribute('rx', '2');
 	g.appendChild(back);
 
-	// Short lead segment from the right edge of the node's circle to the
-	// trunk — visually identical to a tree edge stub, completing the
-	// "expansion" feel.
+	// Lead from the node circle to the trunk.
 	const lead = document.createElementNS(NS, 'line');
 	lead.setAttribute('class', 'peek-edge');
 	lead.setAttribute('x1', anchor.current.x + circleR);
@@ -673,9 +697,8 @@ function renderPeek() {
 	lead.setAttribute('y2', anchor.current.y);
 	g.appendChild(lead);
 
-	// Trunk: starts as a single point at the anchor, grows into a vertical
-	// line spanning all rows.
-	if (count > 1) {
+	// Trunk: vertical line spanning the visible rows.
+	if (visibleRows > 1) {
 		const trunk = document.createElementNS(NS, 'line');
 		trunk.setAttribute('class', 'peek-edge');
 		trunk.setAttribute('x1', trunkX);
@@ -685,12 +708,14 @@ function renderPeek() {
 		g.appendChild(trunk);
 	}
 
-	// One row per member: branch line + tip circle + label + hit rect.
-	members.forEach((m, i) => {
-		const yTarget = topTarget + i * rowH;
-		const y       = lerp(anchor.current.y, yTarget);
+	// Render only the visible window of members.
+	for (let row = 0; row < visibleRows; row++) {
+		const i        = peekScroll + row;
+		const m        = members[i];
+		const yTarget  = topTarget + row * rowH;
+		const y        = lerp(anchor.current.y, yTarget);
 
-		// Branch segment from trunk out to the tip circle.
+		// Branch.
 		const branch = document.createElementNS(NS, 'line');
 		branch.setAttribute('class', 'peek-edge');
 		branch.setAttribute('x1', trunkX);
@@ -699,9 +724,7 @@ function renderPeek() {
 		branch.setAttribute('y2', y);
 		g.appendChild(branch);
 
-		// Tip circle, matching the tree's convention:
-		//   solid  = supertree leaf (terminal taxon)
-		//   hollow = internal node in the supertree (has more descendants)
+		// Tip circle.
 		const circle = document.createElementNS(NS, 'circle');
 		const isLeaf = ('supertree_leaf' in m) ? !!m.supertree_leaf : ((m.weight || 0) <= 1);
 		circle.setAttribute('class', isLeaf ? 'peek-node-solid' : 'peek-node-hollow');
@@ -710,9 +733,7 @@ function renderPeek() {
 		circle.setAttribute('r',  circleR);
 		g.appendChild(circle);
 
-		// Hit rect sits behind the label for easier clicking; sibling order
-		// matters for the :hover + .peek-label selector in CSS. Click on a
-		// member closes the peek and navigates to that taxon.
+		// Hit rect.
 		const hit = document.createElementNS(NS, 'rect');
 		hit.setAttribute('class', 'peek-hit');
 		hit.setAttribute('x', textX);
@@ -726,17 +747,67 @@ function renderPeek() {
 		});
 		g.appendChild(hit);
 
+		// Label.
 		const text = document.createElementNS(NS, 'text');
 		text.setAttribute('class', 'peek-label');
 		text.setAttribute('font-size', font);
 		text.setAttribute('x', textX);
-		text.setAttribute('y', y + font * 0.3);  // baseline offset for vertical centering on circle
+		text.setAttribute('y', y + font * 0.3);
 		text.textContent = m.display;
 		g.appendChild(text);
-	});
+	}
+
+	// Scroll-indicator chevrons (windowed mode only).
+	if (windowed) {
+		const chevronW = font * 0.7;
+		const chevronH = font * 0.5;
+		const cx = trunkX + branchDx + circleR;
+		if (peekScroll > 0) {
+			const up = document.createElementNS(NS, 'path');
+			const yTop = topTarget - rowH / 2 - padY;
+			up.setAttribute('class', 'peek-scroll-indicator');
+			up.setAttribute('d',
+				'M ' + (cx - chevronW / 2) + ' ' + (yTop + chevronH) +
+				' L ' + cx + ' ' + yTop +
+				' L ' + (cx + chevronW / 2) + ' ' + (yTop + chevronH) + ' Z');
+			g.appendChild(up);
+		}
+		if (peekScroll + visibleRows < totalRows) {
+			const dn = document.createElementNS(NS, 'path');
+			const yBot = topTarget + totalH + rowH / 2 + padY;
+			dn.setAttribute('class', 'peek-scroll-indicator');
+			dn.setAttribute('d',
+				'M ' + (cx - chevronW / 2) + ' ' + (yBot - chevronH) +
+				' L ' + cx + ' ' + yBot +
+				' L ' + (cx + chevronW / 2) + ' ' + (yBot - chevronH) + ' Z');
+			g.appendChild(dn);
+		}
+
+	}
 
 	svg.appendChild(g);
 }
+
+// Wheel scrolling for a windowed peek. Registered once at the SVG level
+// because attaching to the peek's <g> isn't reliable in Safari (wheel
+// events don't always bubble to inner SVG groups). We compute the
+// windowing on the fly from current STYLE / viewBox so the handler stays
+// in step with whatever capSizesForViewport last did.
+svg.addEventListener('wheel', (ev) => {
+	if (!peekState) return;
+	if (!ev.target.closest('#peek-overlay')) return;
+	const totalRows = peekState.members.length;
+	const font      = STYLE.labelFontSize;
+	const rowH      = font * 1.4;
+	const vb        = svg.viewBox.baseVal;
+	const maxRows   = Math.max(2, Math.floor((vb.height * 0.70) / rowH));
+	if (maxRows >= totalRows) return;       // list fits, nothing to scroll
+	ev.preventDefault();
+	const next = peekScroll + (ev.deltaY > 0 ? 1 : -1);
+	if (next < 0 || next > totalRows - maxRows) return;
+	peekScroll = next;
+	renderPeek();
+}, { passive: false });
 
 // Dismiss on outside-click or Escape.
 document.addEventListener('click', (ev) => {

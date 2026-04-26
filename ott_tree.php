@@ -18,9 +18,12 @@ class OttTree extends DbTree
 	{
 		$children = array();
 
+		// id != parent excludes the OTT root's self-row (it stores
+		// parent = id rather than NULL), which would otherwise show up as
+		// its own child and put summarise() into an infinite expansion loop.
 		$sql = 'SELECT * FROM tree
 		INNER JOIN taxa USING(id)
-		WHERE parent="' . $id . '"';
+		WHERE parent="' . $id . '" AND id != parent';
 
 		$data = $this->do_query($sql);
 
@@ -29,7 +32,9 @@ class OttTree extends DbTree
 			$node = new stdclass;
 			$node->id = $row->id;
 
-			if (isset($row->parent))
+			// OTT's exported root row points at itself (parent = id) rather
+			// than NULL; treat that as "no parent" so traversals don't loop.
+			if (isset($row->parent) && $row->parent !== $row->id)
 			{
 				$node->parentTaxon = $row->parent;
 			}
@@ -78,7 +83,9 @@ class OttTree extends DbTree
 		$data = $this->do_query($sql);
 		foreach ($data as $row)
 		{
-			if (isset($row->parent))
+			// OTT's exported root row points at itself (parent = id) rather
+			// than NULL; treat that as "no parent" so traversals don't loop.
+			if (isset($row->parent) && $row->parent !== $row->id)
 			{
 				$node->parentTaxon = $row->parent;
 			}
