@@ -23,7 +23,7 @@ input[type=range] { width: 300px; vertical-align: middle; }
    Opacity + positions are animated per-frame from JS, not CSS, so nothing
    conflicts when renderPeek redraws on every tick of the main animation. */
 .peek-edge     { stroke: #b36b00; stroke-width: var(--ott-stroke, 1); fill: none; }
-.peek-label    { font-size: 7px; fill: #7a4a00; cursor: pointer; }
+.peek-label    { fill: #7a4a00; cursor: pointer; }
 .peek-hit      { fill: transparent; cursor: pointer; }
 .peek-hit:hover + .peek-label { fill: #b36b00; font-weight: 600; }
 .peek-backdrop { fill: rgba(255,255,255,0.78); stroke: none; }
@@ -411,8 +411,12 @@ function render(scene) {
 		}
 		g.appendChild(circle);
 
-		// Show labels for all tips; hide mrca labels on internal nodes only
-		if (isTip || !looksMrca) {
+		// Show labels for all tips; hide mrca labels on internal nodes only.
+		// Also hide the other_<...> label while its peek is open — the peek
+		// itself already shows what's inside, so the "(N)" suffix would be
+		// redundant and the label would collide with the peek's lead line.
+		const peekOpenForThisNode = peekState && peekState.nodeId === n.id;
+		if ((isTip || !looksMrca) && !peekOpenForThisNode) {
 			const text = document.createElementNS(NS, 'text');
 			text.setAttribute('x', STYLE.labelDx);
 			text.setAttribute('y', STYLE.labelDy);
@@ -465,14 +469,21 @@ function render(scene) {
 			}
 		}
 
-		// Make "other_" nodes peekable: click opens an SVG polytomy fanning
-		// out from the node, listing the taxa collapsed inside.
+		// Make "other_" nodes peekable: click toggles the SVG polytomy
+		// fanning out from the node. A second click on the same node closes
+		// it; a click on a different other_ swaps the peek to that one;
+		// a click anywhere else also closes (handled by the document-level
+		// listener below).
 		if (n.id.startsWith('other_')) {
 			g.setAttribute('data-peekable', '1');
 			g.style.cursor = 'pointer';
 			g.addEventListener('click', (ev) => {
 				ev.stopPropagation();
-				openPeek(n.id);
+				if (peekState && peekState.nodeId === n.id) {
+					closePeek();
+				} else {
+					openPeek(n.id);
+				}
 			});
 		}
 
@@ -512,6 +523,10 @@ function openPeek(nodeId) {
 	peekState    = { nodeId, members };
 	peekOpenedAt = performance.now();
 	if (peekAnimId) cancelAnimationFrame(peekAnimId);
+	// Refresh the tree so the other_<...> label is hidden for the now-open
+	// node (and shown again for any previously-open one). render() will
+	// also draw the initial peek frame at t=0.
+	if (scene) render(scene);
 	peekTick();
 }
 
@@ -520,6 +535,8 @@ function closePeek() {
 	if (peekAnimId) { cancelAnimationFrame(peekAnimId); peekAnimId = null; }
 	const existing = document.getElementById('peek-overlay');
 	if (existing) existing.remove();
+	// Refresh the tree so the previously-hidden other_<...> label reappears.
+	if (scene) render(scene);
 }
 
 // Drive the expansion animation. Tree's main render() also calls renderPeek,
@@ -554,30 +571,24 @@ function renderPeek() {
 	const t     = 1 - Math.pow(1 - raw, 3);  // easeOutCubic
 	const lerp  = (a, b) => a + (b - a) * t;
 
-	// Layout constants (SVG coord space).
-	const rowH     = 10;
-	const branchDx = 8;      // branch length: trunk -> tip circle
-	const circleR  = 2;
-	const circleToText = 5;  // gap between tip circle and start of label
-	const padX     = 4;
-	const padY     = 2;
-	const charW    = 3.6;    // fallback ~width of one char in the 7px label font
-	const labelGap = 12;     // breathing room past the other_ label
+	// Layout constants — all derived from the (possibly capped) label font
+	// size and circle radius so the peek visually matches the tree on any
+	// viewport, no matter what capSizesForViewport has done to STYLE.
+	const font         = STYLE.labelFontSize;
+	const rowH         = font * 1.4;
+	const branchDx     = font;            // branch length: trunk -> tip circle
+	const circleR      = STYLE.circleR;
+	const circleToText = font * 0.6;
+	const padX         = font * 0.5;
+	const padY         = font * 0.3;
+	const charW        = font * 0.5;
 
-	// Shift the list so the trunk sits just past the right edge of the
-	// rendered other_<...> label. Uses getBBox on the actual text element for
-	// precision; falls back to a character-count estimate if that text isn't
-	// in the DOM yet (e.g. very first frame).
-	let labelEndX = anchor.current.x + 5 + nodeId.length * charW;
-	const labelEl = svg.querySelector('text.label[data-node-id="' + CSS.escape(nodeId) + '"]');
-	if (labelEl) {
-		try {
-			const bb = labelEl.getBBox();
-			// bb is in the <g> local frame; translate into the svg frame.
-			labelEndX = anchor.current.x + bb.x + bb.width;
-		} catch (e) { /* ignore */ }
-	}
-	const trunkX = labelEndX + labelGap;
+	// The peek now anchors directly at the other_ node's circle so it reads
+	// as a local expansion of the tree (rather than something hovering past
+	// the label). The other_ node's text label is hidden while peek is open
+	// for that node — the members list shows what's inside, so the
+	// "other_X (N)" tag would just be clutter.
+	const trunkX = anchor.current.x + circleR + branchDx;
 
 	// Target geometry (fully-expanded positions).
 	const count  = members.length;
@@ -613,12 +624,12 @@ function renderPeek() {
 	back.setAttribute('rx', '2');
 	g.appendChild(back);
 
-	// Short lead segment from just past the other_<...> label to the trunk.
-	// Starting at labelEndX (rather than the anchor circle) prevents the line
-	// from being drawn over the label text.
+	// Short lead segment from the right edge of the node's circle to the
+	// trunk — visually identical to a tree edge stub, completing the
+	// "expansion" feel.
 	const lead = document.createElementNS(NS, 'line');
 	lead.setAttribute('class', 'peek-edge');
-	lead.setAttribute('x1', labelEndX + 2);
+	lead.setAttribute('x1', anchor.current.x + circleR);
 	lead.setAttribute('y1', anchor.current.y);
 	lead.setAttribute('x2', trunkX);
 	lead.setAttribute('y2', anchor.current.y);
@@ -680,8 +691,9 @@ function renderPeek() {
 
 		const text = document.createElementNS(NS, 'text');
 		text.setAttribute('class', 'peek-label');
+		text.setAttribute('font-size', font);
 		text.setAttribute('x', textX);
-		text.setAttribute('y', y + 2);
+		text.setAttribute('y', y + font * 0.3);  // baseline offset for vertical centering on circle
 		text.textContent = m.display;
 		g.appendChild(text);
 	});
