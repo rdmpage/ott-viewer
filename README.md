@@ -1,52 +1,127 @@
 # Open Tree of Life viewer
 
-An interactive viewer for the [Open Tree of Life](https://tree.opentreeoflife.org/) synthesis tree, using a "summary tree" approach to fit arbitrarily large clades into a fixed display size while keeping all labels legible.
+An interactive viewer for the [Open Tree of Life](https://tree.opentreeoflife.org/) synthesis tree. Each view is a summary tree fitted to the browser; clicking a node fetches a fresh summary for that node from a local SQLite copy of the OTT data and animates the transition.
 
 ## Approach
 
-The synthesis tree has ~2.7 million nodes, most of which are unnamed internal nodes (labelled with `mrcaottXottY` placeholders). Displaying this tree requires a strategy for showing only the most informative subset at any given time.
+The synthesis tree has ~2.7 million nodes, most of which are unnamed internal nodes labelled `mrcaottXottY`. Displaying it requires a strategy for showing only the most informative subset at any given time.
 
-A **summary tree** is constructed by expanding a subtree from a given root node outward in priority order (scored by the number of descendant tips) until a size budget **k** is reached, where **k is the number of leaves in the summary**, not the total number of nodes. Children that are not individually expanded are collapsed into synthetic "other" placeholder nodes. This ensures any node in the tree can be displayed in at most k lines, regardless of how many children it has.
+A **summary tree** is constructed by expanding a subtree from a given root node outward in priority order (scored by descendant-tip count) until a size budget *k* is reached — where *k* is the number of **leaves** in the summary, not total nodes. Children that aren't individually expanded are collapsed into synthetic `other_*` placeholder nodes. This bounds the visible tree to at most k leaves no matter how large the clade.
 
-The viewer renders the summary as a left-to-right **cladogram** (root on the left, tips aligned on the right, internal nodes equally spaced horizontally). When the user navigates by clicking on a node:
+When a clicked node's subtree is smaller than k, the server climbs to the smallest ancestor with enough descendants and shows that view, with the entire focal subtree force-expanded. The clicked node is always visible.
 
-- If the clicked node has a large subtree (weight >= k), it becomes the new root (drill in).
-- If it has a small subtree, the viewer climbs to the smallest ancestor with enough descendants and force-expands the path to the clicked node, keeping it visible in context.
+The viewer renders the summary as a left-to-right cladogram (root on the left, tips aligned on the right, internal nodes spaced by depth). Click any node to navigate: the server computes a fresh summary rooted on that node, the client builds a transition between the current and new trees, and the layout animates between them — exiting nodes fade toward the left, entering nodes grow in from their nearest shared ancestor, persisting nodes slide to their new positions.
 
-Transitions between successive views are animated: shared nodes slide to their new positions, exiting nodes fade out toward the root (left), and entering nodes grow in from their nearest shared ancestor.
+## Running it
 
-## Current state
+Requires PHP 7+ and the bundled `ott.db` (SQLite — taxonomy, synthesis tree, and per-node OTT synthesis annotations).
 
-- **Summary tree engine** (`summary.php`): computes summaries by node count or leaf count, with optional forced-expansion paths for focus-on navigation. Outputs Newick (with NHX annotations for node type, weight, and leaf status) and a nested PHP data structure for HTML rendering.
-- **Tree toolkit** (`tree/`): PHP classes for tree nodes, iterators, Newick parsing, and tree ordering (ladderize by weight).
-- **HTML list view** (`test.php`): renders the summary as a nested `<ul>` with CSS classes distinguishing expanded internals, genuine supertree tips, collapsed subtree roots, "other" placeholders, and the focal node. Controls for taxon id, k, and mode (by-leaves / by-nodes).
-- **Transition viewer** (`transition.html`): standalone SVG animation that loads two tree layouts from `tree1.json` and `tree2.json` and animates the morph between them (exit/persist/enter with anchor rules, cubic easing, bidirectional playback, scrub slider). Tip nodes always show labels; internal `mrca*` labels are hidden. Tips with `mrca*` labels are drawn as hollow circles to indicate they have more descendants (following the OTT viewer convention). SVG fills the browser window and rescales on resize via viewBox.
+```
+php -S localhost:8000
+```
 
-## Existing OTT viewer conventions
+Then open `http://localhost:8000/index.php?taxon=ott452461`. The URL parameter `taxon=<external_id>` selects the focal taxon (default `ott452461` = Procellariiformes; works all the way down to a single species and up to `ott93302` = "cellular organisms" the OTT root). `k=<n>` overrides the leaf budget (default 30).
 
-The current opentreeoflife.org tree viewer (`legend.png`) uses the following visual conventions, which are worth considering for this project:
+Browser back / forward step through previous views with full transitions; URLs are shareable.
 
-- **Node size reflects number of descendants** — filled circles scaled by descendant count (small, medium, large).
-- **Hollow tips for unexpanded subtrees** — open circles (○) indicate leaves in the current view that are actually internal nodes in the full tree (i.e. they have more descendants not currently shown). Filled circles indicate genuine terminal taxa.
-- **Solid vs dashed edges** — solid lines for paths supported by phylogenetic data; dashed lines for paths supported only by taxonomy (no phylogenetic source tree).
-- **Ancestor path styling** — nearest ancestors of the current focal node shown in a faded/greyed style.
-- **Mouse-over hints and click-to-navigate** — interactive node selection.
+## Components
+
+End-to-end working pipeline (server → JSON → SVG):
+
+| File                    | Role                                                                                     |
+|-------------------------|------------------------------------------------------------------------------------------|
+| `index.php`             | Interactive entry point. Reads URL params, includes the shared CSS/JS, calls bootstrap.  |
+| `tree.php`              | Server API. `GET tree.php?taxon=<id>&k=<n>` returns the canonical viewer JSON.           |
+| `coordinates.php`       | Depth-based cladogram layout. Adds x/y to every node on a 100×100 grid before emit.      |
+| `summary.php`           | Summary-tree engine: priority-queue expansion, `other_*` collapsing, force-expand paths. |
+| `ott_tree.php`          | OTT-specific access to the local SQLite database (`ott.db`).                             |
+| `viewer.js`             | Client-side: scene building, interpolation, SVG rendering, peek overlay, history.        |
+| `viewer.css`            | Shared styles.                                                                           |
+| `tests/trees.php`       | Layer 1 schema + invariant tests against `tree.php`.                                     |
+
+`transition.html` is a separate two-tree demo page sharing the same `viewer.js` / `viewer.css`.
+
+### JSON schema (server response)
+
+`tree.php` returns:
+
+```json
+{
+  "focal_id":          "<external_id>",
+  "displayed_root_id": "<external_id>",
+  "nodes": {
+    "<id>": {
+      "id":             "<external_id>",
+      "display":        "human-readable name",
+      "type":           "internal | leaf | other | stub",
+      "supertree_leaf": true,
+      "weight":         42,
+      "x": 14.3, "y": 137.5,
+      "annotations": {
+        "supported_by":    ["ot_123@tree1", ...],
+        "terminal":        [...],
+        "resolves":        [...],
+        "conflicts_with":  [...],
+        "partial_path_of": [...]
+      },
+      "members": [ /* only on "other" nodes */ ]
+    }
+  },
+  "edges": [{ "source": "<id>", "target": "<id>" }, ...]
+}
+```
+
+`focal_id` and `displayed_root_id` differ when `focus_on` climbs up to find context. `viewer-pipeline-design.md` documents the schema decisions and gotchas.
+
+## Visual conventions
+
+- **Solid circles**: supertree leaves (real terminal taxa) and internal nodes in the current view.
+- **Hollow circles**: tips in this view that are internal in the supertree — there are more descendants below.
+- **Annotation numbers** sit just left of internal-node circles: distinct studies that support the node above the edge line, distinct studies that conflict below. Hidden when both are zero (typically taxonomy-only nodes).
+- **Hover halo**: a red concentric ring on the hovered node (placeholder colour while we settle on the final palette).
+- **`mrcaottXottY` labels** are hidden on internal nodes; on tip-shaped placeholders we show the prettified `tipA + tipB` form. `other_*` placeholders show just `other (N)` when their parent is mrca-named (otherwise `other <parent name>`).
+- **Upstream stub**: each view shows one "context" node above the displayed root — the supertree parent — so the root doesn't sit in a vacuum.
+
+## Interaction
+
+- Single click on a node circle = navigate. Click on a label or annotation does nothing.
+- Single click on an `other_*` node = open / close its peek list.
+- Click on a peek member = navigate to it.
+- Click on the background = close peek. Escape works too.
+- Wheel over a windowed peek = scroll the visible band.
+- Browser back / forward = previous / next view, with full transitions.
+
+## Testing
+
+```
+php tests/trees.php
+```
+
+Runs `tree.php` against a battery of focal taxa (mid-tree clades, the OTT root with its self-loop, an unknown id, a small clade that climbs, etc.) and asserts JSON shape + graph invariants — node/edge schema, no self-loops, members on `other_*`, focal/root resolution, no orphans. Exits non-zero on any failure. Add cases by appending to `$cases`.
 
 ## To do
 
-### Next steps
+### Next priorities
 
-- **Subtree-leaf labels**: the transition viewer now shows `mrca*` labels on tips and hides them on internals, but the labels are still raw OTT identifiers (e.g. `mrcaott31017ott134468`). These need replacing with something meaningful — e.g. weight/descendant count, or a representative descendant name. This requires richer metadata in the input JSON (currently just id, label, x, y).
-- **"Other" node transitions**: when a node moves between being collapsed inside an "other" set and being individually visible (or vice versa), the animation needs to handle this gracefully. This requires deciding on a visual representation for the transition (e.g. the node emerging from / merging into the "other" placeholder position).
-- **"Other" node contents**: the user needs a way to see what taxa are inside an "other" set, since a taxon of interest may be hidden there. Options include a tooltip, an expandable panel, or a search that highlights which "other" set contains a given name.
-- **Direct summary-to-transition pipeline**: currently the transition viewer reads pre-built JSON files (`tree1.json`, `tree2.json`) generated externally via `treetest.php` from Newick strings shown by `test.php`. This needs to be replaced by a direct pipeline: click a node in the viewer, compute the new summary server-side, return the laid-out tree as JSON, and animate the transition client-side.
+- Right-click / long-press context menu for navigation alternatives (focus, copy URL, open on opentreeoflife.org). Single click stays the primary path.
+- Per-node info panel showing the full annotations breakdown (supported_by + resolves separately, terminal, partial_path_of, taxonomy-only flag).
+- Client-side tree cache keyed by `taxon|k` so back-navigation is instant and re-visiting nodes doesn't re-fetch.
+- Search by taxon name → navigate.
 
 ### Later
 
-- Hollow circles for unexpanded subtree roots are now implemented in the transition viewer (based on `mrca*` label heuristic). Later, extend this to use explicit metadata (node type, weight) from the JSON so any non-leaf tip gets a hollow circle regardless of label.
-- Consider further OTT viewer conventions: node size scaled by descendant count; solid vs dashed edges for phylogeny-supported vs taxonomy-only paths.
-- Integrate the PHP tree layout code (`tree/`) to compute cladogram coordinates server-side and emit JSON directly from the summary engine.
-- Handle the "other" node intersection problem: when transitioning between two trees, determine whether paired "other" nodes (same parent) share enough members to be treated as persistent vs. exit/enter.
-- Add search: find a taxon by name and navigate to it (with focus-on).
-- Consider alternative score functions (e.g. boost taxa with genomes, or taxa the user has previously visited).
-- Persistence of interest: remember previously focused nodes and bias their priority so they remain visible across navigations.
+- Vertical clade-name gutter to the right of tips, with brackets covering each named clade's tip range; click-to-focus on the bracket label. Replaces in-tree internal labels for named clades. Requires partitioning so brackets don't nest.
+- Solid vs dashed edges for phylogeny-supported vs taxonomy-only paths.
+- Node size proportional to descendant count (matching OTT's own viewer).
+- Re-fit on window resize. Currently the viewport-fit is computed once at load.
+- Score-function tweaks: boost taxa with genome data, or those the user has previously visited, so they survive collapse.
+
+### Further out
+
+- Layer 2 browser smoke tests (Playwright) — load `index.php` for a matrix of taxa, assert no console errors after click-around. Skip pixel-diff goldens (too flaky).
+
+## Design notes
+
+- `viewer-pipeline-design.md` — JSON schema, transition endpoint, gotchas, deferred items.
+- `summary-node-peek-design.md` — peek interaction design discussion.
+- `background.md` — references and reading.
