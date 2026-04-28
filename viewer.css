@@ -1,6 +1,97 @@
 html, body { height: 100%; margin: 0; overflow: hidden; }
 body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; padding: 0.5em 2em; display: flex; flex-direction: column; box-sizing: border-box; }
 svg { border: 1px solid #ccc; display: block; flex: 1 1 0; min-height: 0; width: 100%; }
+
+/* ── Interactive viewer layout (index.php) ─────────────────────────────
+   body is a column flex (top → bottom):
+     #nav-history   — collapsible breadcrumb / hoptree area
+     #main          — row flex containing the SVG + the right info panel
+   The info panel is hidden by default; .open shows it. transition.html
+   doesn't include these elements so the rules are no-ops there. */
+#nav-history {
+	flex: 0 0 auto;
+	margin-bottom: 0.4em;
+	font-size: 0.9em;
+}
+#nav-history summary {
+	cursor: pointer;
+	color: #555;
+	user-select: none;
+}
+#hoptree-container {
+	min-height: 1.6em;
+	padding: 0.3em 0;
+}
+#hoptree-container.empty {
+	color: #888;
+	font-style: italic;
+}
+#hoptree-container .crumb {
+	color: #36a;
+	cursor: pointer;
+	text-decoration: none;
+}
+#hoptree-container .crumb:hover { text-decoration: underline; }
+#hoptree-container .crumb.current { color: #333; font-weight: 600; cursor: default; text-decoration: none; }
+#hoptree-container .crumb-sep    { color: #888; margin: 0 0.4em; }
+
+#info-content p     { margin: 0.3em 0; }
+#info-content .key  { color: #777; margin-right: 0.4em; }
+
+/* Per-relation annotation sections (supported_by, conflicts_with, …).
+   Each section is a <details> so the user can collapse long lists. */
+.annotations           { margin-top: 0.7em; border-top: 1px solid #eee; padding-top: 0.5em; }
+.ann-section           { margin: 0.25em 0; }
+.ann-section > summary { cursor: pointer; color: #444; user-select: none; padding: 0.1em 0; }
+.ann-section > summary:hover { color: #000; }
+.ann-list              { list-style: none; padding: 0.2em 0 0.3em 1em; margin: 0; font-size: 0.9em; }
+.ann-list li           { padding: 0.05em 0; }
+.ann-list .tree-id     { color: #888; margin-left: 0.3em; font-size: 0.9em; }
+.ann-empty             { color: #888; font-style: italic; font-size: 0.9em; margin: 0.5em 0; }
+
+#main {
+	flex: 1 1 0;
+	min-height: 0;
+	position: relative;       /* anchor for the absolutely-positioned info panel */
+	display: flex;
+	flex-direction: column;
+}
+#main > svg {
+	flex: 1 1 0;
+	min-height: 0;
+	width: 100%;
+}
+/* Info panel is an OVERLAY over the right edge of the tree, so opening it
+   doesn't shrink the tree. .open shows it; the close button hides it. A
+   subtle drop shadow on the inside-edge sells the "floating over" feel. */
+#info-panel {
+	position: absolute;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	width: 22em;
+	max-width: 35%;
+	background: #fff;
+	border: 1px solid #ccc;
+	box-shadow: -2px 0 6px rgba(0,0,0,0.08);
+	overflow-y: auto;
+	padding: 0.6em 0.9em 0.8em;
+	box-sizing: border-box;
+	display: none;
+	z-index: 10;
+}
+#info-panel.open { display: block; }
+#info-panel .close {
+	position: absolute;
+	top: 0.15em; right: 0.4em;
+	background: none; border: none;
+	font-size: 1.3em; line-height: 1;
+	cursor: pointer; color: #888;
+	padding: 0;
+}
+#info-panel .close:hover { color: #333; }
+#info-content { font-size: 0.9em; line-height: 1.4; }
+#info-content h3 { margin: 0 0 0.4em; font-size: 1.05em; }
 .controls { margin: 0.5em 0; }
 button { padding: 0.3em 1em; margin-right: 0.5em; }
 input[type=range] { width: 300px; vertical-align: middle; }

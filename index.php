@@ -25,7 +25,26 @@ $k = isset($_GET['k']) ? max(2, (int)$_GET['k']) : 30;
 <link rel="stylesheet" href="viewer.css">
 </head>
 <body>
-<svg id="canvas" preserveAspectRatio="xMinYMid meet"></svg>
+
+<!-- Top: navigation history (breadcrumb / hoptree). Collapsible via the
+     native <details> element; open by default. The hoptree itself will
+     render into #hoptree-container. -->
+<details id="nav-history" open>
+	<summary>navigation history</summary>
+	<div id="hoptree-container">(no history yet)</div>
+</details>
+
+<!-- Main: tree on the left, info panel on the right.
+     #info-panel starts hidden; openInfoPanel() / closeInfoPanel() in
+     viewer.js toggle the .open class. -->
+<div id="main">
+	<svg id="canvas" preserveAspectRatio="xMinYMid meet"></svg>
+	<aside id="info-panel">
+		<button class="close" type="button" onclick="closeInfoPanel()" aria-label="close info panel">&times;</button>
+		<div id="info-content"></div>
+	</aside>
+</div>
+
 <script src="viewer.js"></script>
 <script>
 browseInit(<?php echo json_encode($taxon); ?>, <?php echo (int)$k; ?>);

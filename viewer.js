@@ -59,6 +59,7 @@ async function browseInit(taxon, k) {
 	t1 = tree;
 	t2 = tree;
 	init();
+	afterNavigationLanded(tree);
 }
 
 // Click-to-navigate: fetch the tree rooted on the clicked node, build the
@@ -91,6 +92,7 @@ async function navigateTo(taxon, addToHistory) {
 	currentT = 0;
 	setT(0);
 	currentTree = newTree;
+	afterNavigationLanded(newTree);
 	playAnim(1);
 }
 
@@ -99,6 +101,161 @@ window.addEventListener('popstate', () => {
 	const taxon = params.get('taxon');
 	if (taxon) navigateTo(taxon, false);
 });
+
+// ─── Right-hand info panel + breadcrumb trail ───────────────────────────────
+// Panel: openInfoPanel(html) replaces contents and shows; closeInfoPanel()
+// hides. Breadcrumb: a sequential list of every focal the user has landed
+// on this session, deduplicated against the previous entry. Both are
+// driven by afterNavigationLanded(), called once per navigation (initial
+// load, click navigation, and back/forward).
+function openInfoPanel(html) {
+	const panel   = document.getElementById('info-panel');
+	const content = document.getElementById('info-content');
+	if (!panel || !content) return;
+	if (typeof html === 'string') content.innerHTML = html;
+	panel.classList.add('open');
+}
+
+function closeInfoPanel() {
+	const panel = document.getElementById('info-panel');
+	if (panel) panel.classList.remove('open');
+}
+
+const navigationTrail = [];
+
+function afterNavigationLanded(tree) {
+	if (!tree || !tree.focal_id) return;
+	const focal = tree.nodes && tree.nodes[tree.focal_id];
+	if (!focal) return;
+
+	pushTrail(focal);
+	renderTrail();
+	openInfoPanel(renderFocalInfo(focal));
+}
+
+function pushTrail(focal) {
+	const last = navigationTrail[navigationTrail.length - 1];
+	if (last && last.id === focal.id) return;          // dedupe consecutive
+	navigationTrail.push({ id: focal.id, display: focal.display });
+	if (navigationTrail.length > 30) navigationTrail.shift();   // soft cap
+}
+
+function renderTrail() {
+	const c = document.getElementById('hoptree-container');
+	if (!c) return;
+	if (navigationTrail.length === 0) {
+		c.classList.add('empty');
+		c.textContent = '(no history yet)';
+		return;
+	}
+	c.classList.remove('empty');
+	c.innerHTML = '';
+	navigationTrail.forEach((entry, i) => {
+		const isCurrent = (i === navigationTrail.length - 1);
+		const a = document.createElement('a');
+		a.className = isCurrent ? 'crumb current' : 'crumb';
+		a.textContent = entry.display;
+		a.title = entry.id;
+		if (!isCurrent) {
+			a.href = '#';
+			a.addEventListener('click', (ev) => {
+				ev.preventDefault();
+				navigateTo(entry.id);
+			});
+		}
+		c.appendChild(a);
+		if (i < navigationTrail.length - 1) {
+			const sep = document.createElement('span');
+			sep.className = 'crumb-sep';
+			sep.textContent = '›';   // ›
+			c.appendChild(sep);
+		}
+	});
+}
+
+function renderFocalInfo(focal) {
+	const id        = focal.id || '';
+	const display   = focal.display || id;
+	const weight    = focal.weight;
+	const isOttTaxon = /^ott\d+$/.test(id);
+	const ottHref   = isOttTaxon
+		? 'https://tree.opentreeoflife.org/opentree/argus/ottol@' + id.slice(3)
+		: null;
+
+	const parts = [];
+	parts.push('<h3>' + escapeHtml(display) + '</h3>');
+	parts.push('<p><span class="key">id</span>' + escapeHtml(id));
+	if (ottHref) {
+		parts.push(' <a href="' + ottHref + '" target="_blank" rel="noopener">view on OTT &uarr;</a>');
+	}
+	parts.push('</p>');
+	if (weight != null) {
+		parts.push('<p><span class="key">weight</span>' + weight + ' descendant ' + (weight === 1 ? 'tip' : 'tips') + '</p>');
+	}
+	if ('supertree_leaf' in focal) {
+		parts.push('<p><span class="key">kind</span>' + (focal.supertree_leaf ? 'supertree leaf' : 'internal node') + '</p>');
+	}
+	parts.push(renderAnnotations(focal.annotations));
+	return parts.join('');
+}
+
+// Render the five OTT annotation relations as collapsible sections, one per
+// non-empty relation. Each list item links to the study's curator page.
+// Order favours the user's likely interest: support / conflict first, then
+// the more nuanced relations.
+function renderAnnotations(ann) {
+	if (!ann) return '';
+
+	const order = [
+		['supported_by',    'supported by'],
+		['conflicts_with',  'conflicts with'],
+		['resolves',        'resolves'],
+		['partial_path_of', 'partial path of'],
+		['terminal',        'terminal'],
+	];
+
+	const sections = [];
+	order.forEach(([key, label]) => {
+		const list = ann[key];
+		if (!Array.isArray(list) || list.length === 0) return;
+		const distinct = new Set();
+		list.forEach(t => distinct.add(String(t).split('@')[0]));
+		const openByDefault = (key === 'supported_by' || key === 'conflicts_with');
+		const items = list.map(renderStudyTree).join('');
+		sections.push(
+			'<details class="ann-section"' + (openByDefault ? ' open' : '') + '>' +
+				'<summary>' + escapeHtml(label) + ' (' + distinct.size + ')</summary>' +
+				'<ul class="ann-list">' + items + '</ul>' +
+			'</details>'
+		);
+	});
+
+	if (sections.length === 0) {
+		return '<p class="ann-empty">no source-tree annotations</p>';
+	}
+	return '<div class="annotations">' + sections.join('') + '</div>';
+}
+
+// Render one study_tree id ("ot_123@tree4") as a list item linking to the
+// study's page on tree.opentreeoflife.org. The "@treeN" suffix is shown as
+// a small dimmed tag so the user can tell which tree within the study.
+function renderStudyTree(studyTree) {
+	const s   = String(studyTree);
+	const at  = s.indexOf('@');
+	const sid = at > 0 ? s.slice(0, at) : s;
+	const tid = at > 0 ? s.slice(at + 1) : '';
+	const url = 'https://tree.opentreeoflife.org/curator/study/view/' + encodeURIComponent(sid);
+	const treeTag = tid ? ' <span class="tree-id">' + escapeHtml(tid) + '</span>' : '';
+	return '<li><a href="' + url + '" target="_blank" rel="noopener">' + escapeHtml(sid) + '</a>' + treeTag + '</li>';
+}
+
+function escapeHtml(s) {
+	return String(s)
+		.replace(/&/g, '&amp;')
+		.replace(/</g, '&lt;')
+		.replace(/>/g, '&gt;')
+		.replace(/"/g, '&quot;');
+}
 
 // ─── Build Transition Scene ─────────────────────────────────────────────────
 
