@@ -57,17 +57,21 @@ input[type=range] { width: 300px; vertical-align: middle; }
 .annot-support  { fill: #222; }
 .annot-conflict { fill: #a33; }
 
-/* In-flight tree fetch indicator: a small spinning ring in the top-right
-   corner. Toggled via body.loading. Cursor over the SVG also flips to
-   "progress" so the user knows the click was received. */
+/* In-flight tree fetch indicator: a centred spinning ring while a request
+   is on the wire. Toggled via body.loading. Translucent track so the tree
+   underneath stays visible. Centring uses negative margins (not
+   `transform: translate`) because the spin animation owns `transform` —
+   sharing it with translate makes Safari / Firefox interpolate the
+   translate to (0,0) and the element drifts off-centre. */
 #loading {
 	position: fixed;
-	top: 1em;
-	right: 1em;
-	width: 18px;
-	height: 18px;
-	border: 2px solid #ddd;
-	border-top-color: #555;
+	top: 50%;
+	left: 50%;
+	width: 64px;
+	height: 64px;
+	margin: -32px 0 0 -32px;
+	border: 5px solid rgba(150,150,150,0.3);
+	border-top-color: #333;
 	border-radius: 50%;
 	animation: spin 0.8s linear infinite;
 	pointer-events: none;
