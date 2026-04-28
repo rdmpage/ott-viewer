@@ -433,29 +433,52 @@ function render(scene) {
 		else if (n.kind === 'enter') isTip = n.isTipNew;
 		else                         isTip = currentT < 0.5 ? n.isTipOld : n.isTipNew;
 
-		const circle = document.createElementNS(NS, 'circle');
-		circle.setAttribute('r', STYLE.circleR);
-		circle.setAttribute('class', 'tree-node');
-		// Circle rule:
-		//   solid  = node is internal in this view, OR is a supertree leaf
-		//   hollow = tip in this view but the supertree has more descendants
-		// "Anonymous" internals carry mrca-style ids — used for hollow circle
-		// rule and label hiding. The id is the canonical short form so we
-		// don't need to sniff the prettified display string.
+		// Marker rule (three symbols):
+		//   solid circle   — internal in this view, OR a supertree leaf
+		//                    (i.e. genuinely "fully resolved at this point")
+		//   hollow circle  — other_* placeholder (collapsed siblings group)
+		//   right triangle — tip in this view that's actually an internal
+		//                    node in the supertree (collapsed subtree root —
+		//                    the apex points right toward the descendants
+		//                    that aren't being shown)
 		const looksMrca = n.id.startsWith('mrca') || n.id.startsWith('other_mrca');
+		const isOther   = n.id.startsWith('other_');
 		const isSupertreeLeaf = ('supertree_leaf' in n) ? !!n.supertree_leaf : !looksMrca;
-		if (isTip && !isSupertreeLeaf) {
-			circle.setAttribute('fill', 'white');
-			circle.setAttribute('stroke', kindColor(n.kind));
-			circle.setAttribute('stroke-width', STYLE.hollowStrokeWidth);
-		} else {
-			circle.setAttribute('fill', kindColor(n.kind));
-		}
-		g.appendChild(circle);
 
-		// Hover halo — a concentric ring around the node, fades in via CSS
-		// when .tree-node is hovered. Appended AFTER .tree-node so the
-		// `.tree-node:hover ~ .tree-node-halo` selector matches.
+		let marker;
+		if (isTip && isOther) {
+			// Hollow circle.
+			marker = document.createElementNS(NS, 'circle');
+			marker.setAttribute('r', STYLE.circleR);
+			marker.setAttribute('fill', 'white');
+			marker.setAttribute('stroke', kindColor(n.kind));
+			marker.setAttribute('stroke-width', STYLE.hollowStrokeWidth);
+		} else if (isTip && !isSupertreeLeaf) {
+			// Left-pointing triangle. Base aligned to the right with the
+			// other tip markers; apex points into the tree, so the marker
+			// reads as "stand-in for what's hidden behind here" rather
+			// than sticking a tail out past the tip column.
+			marker = document.createElementNS(NS, 'polygon');
+			const r = STYLE.circleR;
+			marker.setAttribute('points',
+				r    + ',' + (-r) + ' ' +
+				r    + ',' + r    + ' ' +
+				(-r) + ',0');
+			marker.setAttribute('fill', kindColor(n.kind));
+		} else {
+			// Solid circle (internal in view, or supertree leaf).
+			marker = document.createElementNS(NS, 'circle');
+			marker.setAttribute('r', STYLE.circleR);
+			marker.setAttribute('fill', kindColor(n.kind));
+		}
+		marker.setAttribute('class', 'tree-node');
+		g.appendChild(marker);
+
+		// Hover halo — a concentric ring, fades in via CSS when .tree-node
+		// is hovered. Appended AFTER .tree-node so the
+		// `.tree-node:hover ~ .tree-node-halo` selector matches. The halo
+		// stays a circle even when the marker is a triangle — it's just an
+		// "interactive area" indicator, not a shape match.
 		const halo = document.createElementNS(NS, 'circle');
 		halo.setAttribute('class', 'tree-node-halo');
 		halo.setAttribute('r', STYLE.circleR * 1.6);
@@ -475,13 +498,18 @@ function render(scene) {
 			text.setAttribute('class', 'label');
 			text.setAttribute('data-node-id', n.id);
 			text.setAttribute('fill', kindColor(n.kind));
-			// For "other_" summary nodes, append a (count) affordance so the
-			// user can see how many taxa hide inside before clicking. Count
-			// comes from the peek data (if loaded).
+			// Append a (count) suffix to communicate "more tips hidden here":
+			//   * other_ summary nodes: count of collapsed siblings (members)
+			//   * any tip in this view that's actually an internal in the
+			//     supertree: descendant-tip count (weight)
+			// Both are drawn as hollow circles, so the count completes the
+			// "this is a stand-in for many" affordance.
 			let display = n.display;
 			if (n.id.startsWith('other_')) {
 				const members = peekMembers(n.id);
 				if (members) display = display + ' (' + members.length + ')';
+			} else if (isTip && !isSupertreeLeaf && (n.weight | 0) > 1) {
+				display = display + ' (' + (n.weight | 0) + ')';
 			}
 			text.textContent = display;
 			g.appendChild(text);
@@ -520,14 +548,14 @@ function render(scene) {
 			}
 		}
 
-		// Click handlers live on the circle itself so the active hit area is
-		// just the node symbol (clicking the label or annotation numbers
-		// does nothing).
+		// Click handlers live on the marker itself (whichever shape it is)
+		// so the active hit area is just the node symbol — clicking a
+		// label or annotation does nothing.
 		//   * other_ nodes toggle the peek (members list)
-		//   * every other node single-clicks to navigate-to via navigateTo
-		if (n.id.startsWith('other_')) {
+		//   * every other node single-clicks to navigateTo
+		if (isOther) {
 			g.setAttribute('data-peekable', '1');
-			circle.addEventListener('click', (ev) => {
+			marker.addEventListener('click', (ev) => {
 				ev.stopPropagation();
 				if (peekState && peekState.nodeId === n.id) {
 					closePeek();
@@ -536,7 +564,7 @@ function render(scene) {
 				}
 			});
 		} else {
-			circle.addEventListener('click', (ev) => {
+			marker.addEventListener('click', (ev) => {
 				ev.stopPropagation();
 				navigateTo(n.id);
 			});

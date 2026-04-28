@@ -121,10 +121,13 @@ foreach ($nodes_map as $internal_id => $_name)
 		// is kept.
 		$parent_is_mrca = (strpos((string)$parent_ext, 'mrca') === 0);
 		$obj = new stdClass;
-		$obj->id      = $other_id;
-		$obj->display = $parent_is_mrca ? 'other' : ('other ' . $parent_display);
-		$obj->type    = 'other';
-		$obj->members = array();
+		$obj->id             = $other_id;
+		$obj->display        = $parent_is_mrca ? 'other' : ('other ' . $parent_display);
+		$obj->type           = 'other';
+		// other_ placeholders are synthetic — never supertree leaves; the
+		// renderer keys its solid/hollow/triangle decision off this flag.
+		$obj->supertree_leaf = false;
+		$obj->members        = array();
 
 		$member_internal_ids = isset($others_map[$parent_internal]) ? $others_map[$parent_internal] : array();
 		foreach ($member_internal_ids as $mid)
