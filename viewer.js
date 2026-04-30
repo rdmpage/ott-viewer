@@ -121,6 +121,16 @@ function closeInfoPanel() {
 	if (panel) panel.classList.remove('open');
 }
 
+// Show the info panel for an arbitrary node (used by single-click). Closes
+// any open peek so the two overlays don't fight for the user's attention.
+// On a double-click, this fires twice in quick succession before dblclick
+// handles the actual navigation.
+function showNodeInfo(node) {
+	if (!node) return;
+	closePeek();
+	openInfoPanel(renderFocalInfo(node));
+}
+
 const navigationTrail = [];
 
 function afterNavigationLanded(tree) {
@@ -708,8 +718,18 @@ function render(scene) {
 		// Click handlers live on the marker itself (whichever shape it is)
 		// so the active hit area is just the node symbol — clicking a
 		// label or annotation does nothing.
-		//   * other_ nodes toggle the peek (members list)
-		//   * every other node single-clicks to navigateTo
+		//
+		// Web-map interaction model:
+		//   * single click  = show info for the clicked node
+		//   * double click  = navigate (re-focus the tree on that node)
+		//   * other_ nodes single-click toggles the peek (members list)
+		//
+		// On a true double-click the browser fires two click events first
+		// and then dblclick — so single click flashes the info panel for
+		// the clicked node, then dblclick supersedes by navigating, after
+		// which afterNavigationLanded() repopulates the panel with the
+		// (same) new focal's info. No setTimeout and no perceived lag on
+		// the single-click path.
 		if (isOther) {
 			g.setAttribute('data-peekable', '1');
 			marker.addEventListener('click', (ev) => {
@@ -722,6 +742,10 @@ function render(scene) {
 			});
 		} else {
 			marker.addEventListener('click', (ev) => {
+				ev.stopPropagation();
+				showNodeInfo(n);
+			});
+			marker.addEventListener('dblclick', (ev) => {
 				ev.stopPropagation();
 				navigateTo(n.id);
 			});
