@@ -24,20 +24,25 @@ if (php_sapi_name() !== 'cli')
 $db  = new PDO('sqlite:' . dirname(__FILE__) . '/ott.db');
 $ott = new OttTree($db);
 
+// Default focal: ott93302 = "cellular organisms" (the OTT root). Picked
+// so a parameter-less request lands at the top of the tree and the user
+// can browse downward, mirroring how OTT's own viewer opens.
+$default_taxon = 'ott93302';
+
 if (php_sapi_name() === 'cli')
 {
-	$taxon_param = isset($argv[1]) ? $argv[1] : 'ott452461';
+	$taxon_param = isset($argv[1]) ? $argv[1] : $default_taxon;
 	$k_param     = isset($argv[2]) ? (int)$argv[2] : 30;
 }
 else
 {
-	$taxon_param = isset($_GET['taxon']) ? trim($_GET['taxon']) : 'ott452461';
+	$taxon_param = isset($_GET['taxon']) ? trim($_GET['taxon']) : $default_taxon;
 	$k_param     = isset($_GET['k'])     ? max(2, (int)$_GET['k']) : 30;
 }
 
 $id = $ott->get_id_by_external($taxon_param);
 if ($id === null && ctype_digit($taxon_param)) $id = $taxon_param;
-if ($id === null) $id = $ott->get_id_by_external('ott452461');
+if ($id === null) $id = $ott->get_id_by_external($default_taxon);
 
 $sumtree = new SummaryTree($ott);
 $sumtree->focus_on($id, $k_param);

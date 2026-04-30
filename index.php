@@ -3,13 +3,14 @@
 // OTT tree viewer — interactive entry point.
 //
 // URL params:
-//   taxon=<external_id>   focal taxon (default: ott452461 — Procellariiformes)
+//   taxon=<external_id>   focal taxon (default: ott93302 — cellular
+//                         organisms, the OTT root)
 //   k=<int>               summary leaf budget (default: 30)
 //
 // The page renders the tree rooted on the focal taxon. Clicking a node
 // fetches a fresh tree.json for that node and animates the transition.
 
-$default_taxon = 'ott452461';
+$default_taxon = 'ott93302';
 
 $taxon = isset($_GET['taxon']) ? trim($_GET['taxon']) : $default_taxon;
 if (!preg_match('/^[A-Za-z0-9_]+$/', $taxon)) $taxon = $default_taxon;
@@ -26,9 +27,19 @@ $k = isset($_GET['k']) ? max(2, (int)$_GET['k']) : 30;
 </head>
 <body>
 
-<!-- Top: navigation history (breadcrumb / hoptree). Collapsible via the
-     native <details> element; open by default. The hoptree itself will
-     render into #hoptree-container. -->
+<!-- Top navbar: Home | search | About. Search hits appear in a dropdown
+     beneath the input; clicking one navigates the tree to that taxon. -->
+<nav id="navbar">
+	<a href="?" class="nav-link nav-home">Home</a>
+	<div id="search-bar">
+		<input type="text" id="search-input" placeholder="search taxon name…" autocomplete="off" spellcheck="false">
+		<ul id="search-results"></ul>
+	</div>
+	<a href="about.php" class="nav-link nav-about">About</a>
+</nav>
+
+<!-- Navigation history (breadcrumb / hoptree). Collapsible via the
+     native <details> element; open by default. -->
 <details id="nav-history" open>
 	<summary>navigation history</summary>
 	<div id="hoptree-container">(no history yet)</div>

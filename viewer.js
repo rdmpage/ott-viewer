@@ -102,6 +102,39 @@ window.addEventListener('popstate', () => {
 	if (taxon) navigateTo(taxon, false);
 });
 
+// Hard "jump to" — replace the displayed tree with a fresh layout for the
+// new taxon, no transition. Used by the search dropdown so picking an
+// unrelated taxon shows a fully-formed tree from t=0 instead of trying to
+// animate between two unrelated layouts. Resets stableYScale so the fit
+// is recomputed for the new tree's geometry.
+async function replaceTree(taxon, addToHistory) {
+	if (animId) { cancelAnimationFrame(animId); animId = null; }
+	if (taxon == null) return;
+	if (addToHistory === undefined) addToHistory = true;
+
+	let newTree;
+	try {
+		newTree = await fetchTree(taxon, currentK);
+	} catch (e) {
+		console.error('replaceTree: fetch failed', e);
+		return;
+	}
+
+	if (addToHistory) {
+		const url = new URL(window.location);
+		url.searchParams.set('taxon', taxon);
+		history.pushState({ taxon }, '', url.toString());
+	}
+
+	closePeek();
+	stableYScale = null;        // refit for the new tree
+	currentTree = newTree;
+	t1 = newTree;
+	t2 = newTree;               // degenerate transition: just renders newTree
+	init();
+	afterNavigationLanded(newTree);
+}
+
 // ─── Right-hand info panel + breadcrumb trail ───────────────────────────────
 // Panel: openInfoPanel(html) replaces contents and shows; closeInfoPanel()
 // hides. Breadcrumb: a sequential list of every focal the user has landed
@@ -130,6 +163,94 @@ function showNodeInfo(node) {
 	closePeek();
 	openInfoPanel(renderFocalInfo(node));
 }
+
+// ─── Taxon search (exact match) ─────────────────────────────────────────────
+// Wires the #search-input + #search-results dropdown. Each input change
+// fires one fetch to search.php; results render as clickable rows; click
+// (or Enter when there's a single hit) navigates the tree to that taxon.
+// Stale-response guard ignores a response whose query no longer matches
+// the current input value.
+function setupSearch() {
+	const input   = document.getElementById('search-input');
+	const results = document.getElementById('search-results');
+	if (!input || !results) return;
+
+	let lastQuery = '';
+
+	async function doSearch() {
+		const q = input.value.trim();
+		if (q === lastQuery) return;
+		lastQuery = q;
+
+		if (q === '') {
+			results.classList.remove('open');
+			results.innerHTML = '';
+			return;
+		}
+
+		let hits;
+		try {
+			const r = await fetch('search.php?q=' + encodeURIComponent(q));
+			hits = await r.json();
+		} catch (e) {
+			console.error('search failed', e);
+			return;
+		}
+		if (q !== input.value.trim()) return;   // user kept typing — drop stale
+
+		results.innerHTML = '';
+		if (!Array.isArray(hits) || hits.length === 0) {
+			const li = document.createElement('li');
+			li.className = 'empty';
+			li.textContent = 'no exact match for "' + q + '"';
+			results.appendChild(li);
+		} else {
+			hits.forEach(h => {
+				const li  = document.createElement('li');
+				const lab = document.createElement('span');
+				lab.className   = 'label-text';
+				lab.textContent = h.label;
+				const ext = document.createElement('span');
+				ext.className   = 'ext-id';
+				ext.textContent = h.external_id;
+				li.appendChild(lab);
+				li.appendChild(ext);
+				li.addEventListener('click', () => pickResult(h));
+				results.appendChild(li);
+			});
+		}
+		results.classList.add('open');
+	}
+
+	function pickResult(h) {
+		results.classList.remove('open');
+		input.value = h.label;
+		lastQuery = h.label;
+		// Use replaceTree (not navigateTo) so the search jump is a clean
+		// reset to the fully-formed new tree rather than a transition
+		// between two potentially-unrelated layouts.
+		replaceTree(h.external_id);
+	}
+
+	input.addEventListener('input', doSearch);
+	input.addEventListener('keydown', (ev) => {
+		if (ev.key === 'Enter') {
+			ev.preventDefault();
+			const first = results.querySelector('li:not(.empty)');
+			if (first) first.click();
+		} else if (ev.key === 'Escape') {
+			results.classList.remove('open');
+			input.blur();
+		}
+	});
+
+	// Close dropdown on click outside the search bar.
+	document.addEventListener('click', (ev) => {
+		if (!ev.target.closest('#search-bar')) results.classList.remove('open');
+	});
+}
+
+setupSearch();
 
 const navigationTrail = [];
 
@@ -549,11 +670,15 @@ function nodeAnnotation(n) {
 // renders as a single uniform tree.
 const SHOW_TRANSITION_COLORS = false;
 
+// Default returns 'currentColor', which means SVG fill / stroke inherit
+// from the SVG element's `color` CSS property (set in viewer.css to
+// var(--tree-stroke)). That way light/dark theme switches automatically
+// propagate to every node circle, edge, label, and triangle.
 function kindColor(kind) {
-	if (!SHOW_TRANSITION_COLORS) return '#333';
+	if (!SHOW_TRANSITION_COLORS) return 'currentColor';
 	if (kind === 'exit')  return '#c33';
 	if (kind === 'enter') return '#36a';
-	return '#333';
+	return 'currentColor';
 }
 
 function render(scene) {
@@ -614,12 +739,13 @@ function render(scene) {
 
 		let marker;
 		if (isTip && isOther) {
-			// Hollow circle.
+			// Hollow circle. Fill / stroke come from .tree-node.is-hollow
+			// in CSS so they track the theme's background and tree-stroke
+			// vars automatically.
 			marker = document.createElementNS(NS, 'circle');
 			marker.setAttribute('r', STYLE.circleR);
-			marker.setAttribute('fill', 'white');
-			marker.setAttribute('stroke', kindColor(n.kind));
 			marker.setAttribute('stroke-width', STYLE.hollowStrokeWidth);
+			marker.setAttribute('class', 'tree-node is-hollow');
 		} else if (isTip && !isSupertreeLeaf) {
 			// Left-pointing triangle. Base aligned to the right with the
 			// other tip markers; apex points into the tree, so the marker
@@ -632,13 +758,14 @@ function render(scene) {
 				r    + ',' + r    + ' ' +
 				(-r) + ',0');
 			marker.setAttribute('fill', kindColor(n.kind));
+			marker.setAttribute('class', 'tree-node');
 		} else {
 			// Solid circle (internal in view, or supertree leaf).
 			marker = document.createElementNS(NS, 'circle');
 			marker.setAttribute('r', STYLE.circleR);
 			marker.setAttribute('fill', kindColor(n.kind));
+			marker.setAttribute('class', 'tree-node');
 		}
-		marker.setAttribute('class', 'tree-node');
 		g.appendChild(marker);
 
 		// Hover halo — a concentric ring, fades in via CSS when .tree-node
