@@ -176,21 +176,60 @@ svg {
 	user-select: none;
 }
 #hoptree-container {
-	min-height: 1.6em;
+	/* Fixed height so the hoptree never shoves the main viewer up or
+	   down — short hoptrees leave whitespace below; tall ones scroll
+	   inside the strip rather than expanding it. */
+	height: 130px;
 	padding: 0.3em 0;
+	overflow: auto;
+	box-sizing: border-box;
 }
 #hoptree-container.empty {
 	color: var(--text-dim);
 	font-style: italic;
 }
-#hoptree-container .crumb {
-	color: var(--text-link);
-	cursor: pointer;
-	text-decoration: none;
+
+/* Hoptree SVG — small cladogram of the spanning subtree of every visited
+   node, drawn at pixel scale (sized to its content; the container scrolls
+   horizontally if it overflows). Each node is a rounded rectangle with the
+   name inside; edges are smooth Bezier curves between rectangles. Visited
+   nodes get a tinted background; the current focal is solid filled. */
+/* Override the general `svg { width: 100%; flex: 1 1 0; border: ... }`
+   rule so the hoptree renders at its natural pixel size — left-to-right,
+   no stretching, font stays at its intrinsic 11 px regardless of how
+   wide the page is. The container scrolls horizontally when the
+   hoptree gets wider than the viewport. */
+#hoptree-container .hoptree-svg,
+#hoptree-container .hoptree-svg:focus,
+#hoptree-container .hoptree-svg :focus {
+	display: block;
+	flex: none;
+	border: 0 none transparent;
+	outline: 0 none transparent;
+	min-height: 0;
+	color: inherit;
+	/* width / height set inline from JS in pixels — match the viewBox
+	   so preserveAspectRatio is a no-op. */
 }
-#hoptree-container .crumb:hover { text-decoration: underline; }
-#hoptree-container .crumb.current { color: var(--text); font-weight: 600; cursor: default; text-decoration: none; }
-#hoptree-container .crumb-sep    { color: var(--text-dim); margin: 0 0.4em; }
+#hoptree-container .hoptree-node-g,
+#hoptree-container .hoptree-node-g:focus,
+#hoptree-container .hoptree-node-g:focus-visible { outline: none; }
+
+.hoptree-rect           { fill: var(--bg); stroke: var(--text-dim); stroke-width: 1.5; }
+.hoptree-rect.visited   { fill: var(--hover-bg); stroke: var(--text-link); }
+.hoptree-rect.focal     { fill: var(--text-link); stroke: var(--text-link); }
+.hoptree-label          { fill: var(--text); pointer-events: none; }
+.hoptree-label.focal    { fill: #fff; font-weight: 600; }
+.hoptree-edge           { stroke: var(--text-dim); stroke-width: 1.2; fill: none; opacity: 0.6; }
+.hoptree-node-g         { cursor: pointer; }
+.hoptree-node-g:hover .hoptree-rect { stroke: var(--text-link); stroke-width: 2.5; }
+
+/* Single-node case (just landed, no history yet): show the name as a
+   plain crumb instead of an empty SVG. */
+#hoptree-container .crumb-current {
+	color: var(--text);
+	font-weight: 600;
+}
 
 #info-content p     { margin: 0.3em 0; }
 #info-content .key  { color: var(--text-dim); margin-right: 0.4em; }

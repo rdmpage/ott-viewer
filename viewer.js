@@ -156,12 +156,42 @@ function closeInfoPanel() {
 
 // Show the info panel for an arbitrary node (used by single-click). Closes
 // any open peek so the two overlays don't fight for the user's attention.
-// On a double-click, this fires twice in quick succession before dblclick
-// handles the actual navigation.
 function showNodeInfo(node) {
 	if (!node) return;
 	closePeek();
 	openInfoPanel(renderFocalInfo(node));
+}
+
+// Single-vs-double click discriminator for tree nodes. We can't rely on
+// the browser's dblclick event firing reliably (Firefox doesn't on SVG
+// when click handlers stop propagation), so we count clicks within a
+// short window. First click on a node queues a timer that shows info;
+// a second click on the SAME node within the window cancels the timer
+// and navigates instead. A click on a different node before the timer
+// fires supersedes it (the most recently clicked node wins).
+const SINGLE_CLICK_DELAY = 260;
+let pendingClickNode  = null;
+let pendingClickTimer = null;
+
+function handleNodeClick(node) {
+	if (!node) return;
+	// Same node clicked twice within the window → treat as double-click.
+	if (pendingClickNode && pendingClickNode.id === node.id) {
+		clearTimeout(pendingClickTimer);
+		pendingClickNode  = null;
+		pendingClickTimer = null;
+		navigateTo(node.id);
+		return;
+	}
+	// New click (or click on a different node) — supersede any
+	// pending single-click action.
+	if (pendingClickTimer) clearTimeout(pendingClickTimer);
+	pendingClickNode  = node;
+	pendingClickTimer = setTimeout(() => {
+		showNodeInfo(node);
+		pendingClickNode  = null;
+		pendingClickTimer = null;
+	}, SINGLE_CLICK_DELAY);
 }
 
 // ─── Taxon search (exact match) ─────────────────────────────────────────────
@@ -260,48 +290,227 @@ function afterNavigationLanded(tree) {
 	if (!focal) return;
 
 	pushTrail(focal);
-	renderTrail();
+	renderHoptree();
 	openInfoPanel(renderFocalInfo(focal));
 }
+
+// Soft cap on the navigation trail. The hoptree shows the spanning
+// subtree of every visited node, so the visual gets crowded fast — 8
+// keeps it readable without throwing away too much history. Tuneable.
+const TRAIL_CAP = 8;
 
 function pushTrail(focal) {
 	const last = navigationTrail[navigationTrail.length - 1];
 	if (last && last.id === focal.id) return;          // dedupe consecutive
 	navigationTrail.push({ id: focal.id, display: focal.display });
-	if (navigationTrail.length > 30) navigationTrail.shift();   // soft cap
+	while (navigationTrail.length > TRAIL_CAP) navigationTrail.shift();
 }
 
-function renderTrail() {
+// Render the hoptree — the spanning subtree of every visited node, drawn
+// as a small cladogram from JSON returned by hoptree.php. The latest
+// focal is highlighted; clicking any node navigates to it.
+async function renderHoptree() {
 	const c = document.getElementById('hoptree-container');
 	if (!c) return;
+
 	if (navigationTrail.length === 0) {
 		c.classList.add('empty');
 		c.textContent = '(no history yet)';
 		return;
 	}
+
+	// Trivial case: only one entry, no history to draw — just show the
+	// name. Avoids a wasted fetch + lets the strip stay short.
+	if (navigationTrail.length === 1) {
+		c.classList.remove('empty');
+		c.innerHTML = '';
+		const span = document.createElement('span');
+		span.className = 'crumb-current';
+		span.textContent = navigationTrail[0].display;
+		c.appendChild(span);
+		return;
+	}
+
+	const ids = navigationTrail.map(e => e.id).join(',');
+	let data;
+	try {
+		const r = await fetch('hoptree.php?ids=' + encodeURIComponent(ids));
+		data = await r.json();
+	} catch (e) {
+		console.error('hoptree fetch failed', e);
+		return;
+	}
+
 	c.classList.remove('empty');
 	c.innerHTML = '';
-	navigationTrail.forEach((entry, i) => {
-		const isCurrent = (i === navigationTrail.length - 1);
-		const a = document.createElement('a');
-		a.className = isCurrent ? 'crumb current' : 'crumb';
-		a.textContent = entry.display;
-		a.title = entry.id;
-		if (!isCurrent) {
-			a.href = '#';
-			a.addEventListener('click', (ev) => {
-				ev.preventDefault();
-				navigateTo(entry.id);
-			});
-		}
-		c.appendChild(a);
-		if (i < navigationTrail.length - 1) {
-			const sep = document.createElement('span');
-			sep.className = 'crumb-sep';
-			sep.textContent = '›';   // ›
-			c.appendChild(sep);
-		}
+	c.appendChild(buildHoptreeSvg(data));
+}
+
+function buildHoptreeSvg(data) {
+	const HOP_NS = 'http://www.w3.org/2000/svg';
+
+	// Pixel-scale layout — depth-based x, DFS-order y for leaves with
+	// internal nodes at the midpoint of their children. The SVG is sized
+	// to fit its content; the container scrolls horizontally if needed.
+	const COL_W     = 130;    // horizontal step per depth level
+	const RECT_W    = 110;    // rectangle width
+	const RECT_H    = 26;     // rectangle height
+	const ROW_H     = 36;     // vertical step per leaf row
+	const MARGIN_X  = 12;     // padding around the SVG content
+	const MARGIN_Y  = 10;
+	const FONT_PX   = 11;
+	const MAX_CHARS = 16;     // truncate longer labels with an ellipsis
+
+	const nodes  = data.nodes || {};
+	const edges  = data.edges || [];
+	const allIds = Object.keys(nodes);
+	if (allIds.length === 0) {
+		const svg = document.createElementNS(HOP_NS, 'svg');
+		svg.setAttribute('class', 'hoptree-svg');
+		return svg;
+	}
+
+	// Adjacency: parent -> children, plus a has-parent set for finding roots.
+	const children  = {};
+	const hasParent = {};
+	edges.forEach(e => {
+		if (!children[e.source]) children[e.source] = [];
+		children[e.source].push(e.target);
+		hasParent[e.target] = true;
 	});
+
+	// Roots of the spanning tree (no parent in the spanning structure).
+	const roots = allIds.filter(id => !hasParent[id]);
+
+	// x = column index in the SPANNING tree (BFS distance from a root),
+	// not absolute supertree depth — otherwise jumping from the OTT root
+	// to a deep clade like Deuterostomia would space the two boxes 30+
+	// columns apart even though they sit in adjacent slots of the
+	// reduced spanning tree.
+	const level = {};
+	const queue = roots.slice();
+	roots.forEach(r => { level[r] = 0; });
+	while (queue.length > 0) {
+		const id   = queue.shift();
+		const kids = children[id] || [];
+		kids.forEach(k => {
+			if (!(k in level)) {
+				level[k] = level[id] + 1;
+				queue.push(k);
+			}
+		});
+	}
+	allIds.forEach(id => {
+		nodes[id]._x = (level[id] || 0) * COL_W + MARGIN_X + RECT_W / 2;
+	});
+
+	// y via DFS: leaves get sequential y, internals sit at the midpoint
+	// of their children's y values.
+	let nextY   = MARGIN_Y + RECT_H / 2;
+	function place(id) {
+		const kids = children[id] || [];
+		if (kids.length === 0) {
+			nodes[id]._y = nextY;
+			nextY += ROW_H;
+			return;
+		}
+		kids.forEach(place);
+		const ys = kids.map(k => nodes[k]._y);
+		nodes[id]._y = (Math.min.apply(null, ys) + Math.max.apply(null, ys)) / 2;
+	}
+	roots.forEach(place);
+
+	// SVG dimensions = bounding box of all node rects + outer margin.
+	let maxRight = 0, maxBottom = 0;
+	allIds.forEach(id => {
+		const right  = nodes[id]._x + RECT_W / 2;
+		const bottom = nodes[id]._y + RECT_H / 2;
+		if (right  > maxRight)  maxRight  = right;
+		if (bottom > maxBottom) maxBottom = bottom;
+	});
+	const width  = maxRight  + MARGIN_X;
+	const height = maxBottom + MARGIN_Y;
+
+	const svg = document.createElementNS(HOP_NS, 'svg');
+	svg.setAttribute('class', 'hoptree-svg');
+	svg.setAttribute('width',  width);
+	svg.setAttribute('height', height);
+	svg.setAttribute('viewBox', '0 0 ' + width + ' ' + height);
+	// Inline width/height (vs only the SVG attribute) wins over the
+	// general `svg { width: 100% }` rule via specificity, keeping the
+	// hoptree at its natural pixel scale. The border / outline knobs
+	// here are belt-and-suspenders against the global svg-border rule
+	// and Firefox's click-focus outline (which the CSS override alone
+	// has been seen to miss).
+	svg.style.width   = width  + 'px';
+	svg.style.height  = height + 'px';
+	svg.style.border  = '0 none transparent';
+	svg.style.outline = '0 none transparent';
+
+	// Edges: smooth Bezier from the right edge of the parent rect to the
+	// left edge of the child rect, mirroring the prototype.
+	edges.forEach(e => {
+		const src = nodes[e.source];
+		const tgt = nodes[e.target];
+		if (!src || !tgt) return;
+		const x1 = src._x + RECT_W / 2, y1 = src._y;
+		const x2 = tgt._x - RECT_W / 2, y2 = tgt._y;
+		const cx = (x1 + x2) / 2;
+		const path = document.createElementNS(HOP_NS, 'path');
+		path.setAttribute('d',
+			'M ' + x1 + ' ' + y1 +
+			' C ' + cx + ' ' + y1 + ', ' + cx + ' ' + y2 + ', ' +
+			x2 + ' ' + y2);
+		path.setAttribute('class', 'hoptree-edge');
+		svg.appendChild(path);
+	});
+
+	// Nodes: rounded rect with the truncated display name centred inside.
+	allIds.forEach(id => {
+		const n  = nodes[id];
+		const g  = document.createElementNS(HOP_NS, 'g');
+		const cls = (n.id === data.focal_id) ? 'focal'
+		           : n.visited ? 'visited' : '';
+		g.setAttribute('class', 'hoptree-node-g');
+		g.setAttribute('transform', 'translate(' + n._x + ',' + n._y + ')');
+		g.addEventListener('click', () => navigateTo(n.id));
+
+		const rect = document.createElementNS(HOP_NS, 'rect');
+		rect.setAttribute('x', -RECT_W / 2);
+		rect.setAttribute('y', -RECT_H / 2);
+		rect.setAttribute('width',  RECT_W);
+		rect.setAttribute('height', RECT_H);
+		rect.setAttribute('rx', 4);
+		rect.setAttribute('class', 'hoptree-rect ' + cls);
+		g.appendChild(rect);
+
+		// Anonymous mrca-style internals (id starts with "mrca") have a
+		// prettified `display` that's a "<tipA> + <tipB>" pair — but
+		// many such nodes near each other share one bracketing tip so
+		// the strings all look almost identical going down the tree.
+		// Show the raw id instead; it's at least unique per node.
+		const labelText = n.id && n.id.indexOf('mrca') === 0
+			? n.id
+			: (n.display || n.id);
+
+		const text = document.createElementNS(HOP_NS, 'text');
+		text.setAttribute('text-anchor', 'middle');
+		text.setAttribute('dominant-baseline', 'central');
+		text.setAttribute('font-size', FONT_PX);
+		text.setAttribute('class', 'hoptree-label ' + cls);
+		text.textContent = truncateLabel(labelText, MAX_CHARS);
+		g.appendChild(text);
+
+		svg.appendChild(g);
+	});
+
+	return svg;
+}
+
+function truncateLabel(s, maxChars) {
+	const str = String(s || '');
+	if (str.length <= maxChars) return str;
+	return str.slice(0, maxChars - 1) + '…';
 }
 
 function renderFocalInfo(focal) {
@@ -851,12 +1060,13 @@ function render(scene) {
 		//   * double click  = navigate (re-focus the tree on that node)
 		//   * other_ nodes single-click toggles the peek (members list)
 		//
-		// On a true double-click the browser fires two click events first
-		// and then dblclick — so single click flashes the info panel for
-		// the clicked node, then dblclick supersedes by navigating, after
-		// which afterNavigationLanded() repopulates the panel with the
-		// (same) new focal's info. No setTimeout and no perceived lag on
-		// the single-click path.
+		// We detect double-clicks ourselves (timer + same-node check)
+		// rather than relying on the browser's `dblclick` event. Firefox
+		// in particular doesn't always fire dblclick on SVG elements when
+		// click handlers stop propagation, so the cross-browser-safe path
+		// is to count clicks within a short window. Cost: a ~SINGLE_CLICK_DELAY
+		// ms perceived lag on single-click info, which is acceptable for
+		// a click → info-panel interaction.
 		if (isOther) {
 			g.setAttribute('data-peekable', '1');
 			marker.addEventListener('click', (ev) => {
@@ -870,11 +1080,7 @@ function render(scene) {
 		} else {
 			marker.addEventListener('click', (ev) => {
 				ev.stopPropagation();
-				showNodeInfo(n);
-			});
-			marker.addEventListener('dblclick', (ev) => {
-				ev.stopPropagation();
-				navigateTo(n.id);
+				handleNodeClick(n);
 			});
 		}
 
