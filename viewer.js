@@ -59,6 +59,11 @@ async function browseInit(taxon, k) {
 	t1 = tree;
 	t2 = tree;
 	init();
+	// Degenerate transition (t1 === t2): jump to the rest state so render-
+	// at-rest features (brackets, etc.) are visible on initial load. Without
+	// this, currentT stays at 0 and brackets never fade in until the user
+	// navigates somewhere.
+	setT(1);
 	afterNavigationLanded(tree);
 }
 
@@ -87,6 +92,7 @@ async function navigateTo(taxon, addToHistory) {
 	t1 = currentTree;
 	t2 = newTree;
 	scene = buildScene(t1, t2);
+	bracketState = computeBracketState(t2, scene);
 	fitViewBox(scene);
 	capSizesForViewport();
 	currentT = 0;
@@ -851,6 +857,20 @@ const STYLE = {
 	annotSlotRightDx: 0,
 };
 
+// ─── Internal-clade brackets ────────────────────────────────────────────────
+// Vertical bars to the right of the tip labels marking named multi-tip
+// internal clades. Greedy interval colouring picks which clades fit in the
+// track budget; overlapping ones get dropped. Defaults match brackets.html
+// (one track, shallowest first, min two tips).
+const BRACKET_TRACKS_DEFAULT = 1;
+const BRACKET_MIN_TIPS       = 2;
+const BRACKET_SORT           = 'depth-asc';
+const BRACKET_REST_THRESHOLD = 0.97;        // currentT ≥ this ⇒ brackets fade in
+const BRACKET_TRACK_W        = LABEL_FONT * 12;
+const BRACKET_LABEL_GAP      = LABEL_FONT * 0.6;
+const BRACKET_GUTTER_PAD     = LABEL_FONT;
+let bracketState = null;
+
 function clearSVG() {
 	while (svg.firstChild) svg.removeChild(svg.firstChild);
 }
@@ -888,6 +908,112 @@ function kindColor(kind) {
 	if (kind === 'exit')  return '#c33';
 	if (kind === 'enter') return '#36a';
 	return 'currentColor';
+}
+
+// Pick the named multi-tip internal clades to bracket and assign each to a
+// track. Pure function over the destination tree + the current scene (used
+// only to read each node's at-rest y, so brackets line up with the rendered
+// tips). Returns { placed, dropped, trackCount } or null.
+function computeBracketState(tree, scene) {
+	if (!tree || !tree.nodes) return null;
+	const nodes = tree.nodes;
+	const edges = tree.edges || [];
+
+	const toById = {};
+	scene.nodes.forEach(n => { toById[n.id] = { x: n.to.x, y: n.to.y }; });
+
+	const children = {};
+	edges.forEach(e => {
+		if (!children[e.source]) children[e.source] = [];
+		children[e.source].push(e.target);
+	});
+
+	// Spanning-tree depth via BFS from displayed_root_id (tree.php doesn't
+	// emit a depth field). Used purely to pick a sort order for placement.
+	const depthInTree = {};
+	if (tree.displayed_root_id && nodes[tree.displayed_root_id]) {
+		depthInTree[tree.displayed_root_id] = 0;
+		const q = [tree.displayed_root_id];
+		while (q.length) {
+			const id = q.shift();
+			(children[id] || []).forEach(c => {
+				if (!(c in depthInTree)) {
+					depthInTree[c] = depthInTree[id] + 1;
+					q.push(c);
+				}
+			});
+		}
+	}
+
+	// Per-node y-range (clade extent) + descendant-tip count. Memoised DFS.
+	const ranges = {};
+	function rangeOf(id) {
+		if (ranges[id]) return ranges[id];
+		const kids = children[id] || [];
+		const yPos = (toById[id] && toById[id].y != null)
+			? toById[id].y
+			: ((nodes[id] && nodes[id].y) || 0);
+		if (kids.length === 0) return ranges[id] = { min: yPos, max: yPos, tips: 1 };
+		let min = Infinity, max = -Infinity, tips = 0;
+		kids.forEach(c => {
+			const r = rangeOf(c);
+			if (r.min < min) min = r.min;
+			if (r.max > max) max = r.max;
+			tips += r.tips;
+		});
+		return ranges[id] = { min, max, tips };
+	}
+	Object.keys(nodes).forEach(rangeOf);
+
+	// Candidate filter: keep named ott* internals only, drop displayed root,
+	// drop monotypic, drop anything below the tip-count threshold.
+	const candidates = Object.values(nodes).filter(n => {
+		if (n.type === 'leaf' || n.type === 'other' || n.type === 'stub') return false;
+		if (!/^ott\d+$/.test(n.id)) return false;
+		if (n.id === tree.displayed_root_id) return false;
+		const kids = children[n.id] || [];
+		if (kids.length < 2) return false;
+		return ranges[n.id].tips >= BRACKET_MIN_TIPS;
+	});
+
+	candidates.sort((a, b) => {
+		const da = depthInTree[a.id] || 0, db = depthInTree[b.id] || 0;
+		if (BRACKET_SORT === 'depth-asc')  return da - db;
+		if (BRACKET_SORT === 'depth-desc') return db - da;
+		if (BRACKET_SORT === 'size-desc')  return ranges[b.id].tips - ranges[a.id].tips;
+		if (BRACKET_SORT === 'size-asc')   return ranges[a.id].tips - ranges[b.id].tips;
+		return 0;
+	});
+
+	// Greedy interval colouring: leftmost track that doesn't overlap.
+	const tracks  = [];
+	const placed  = [];
+	const dropped = [];
+	candidates.forEach(c => {
+		const r = ranges[c.id];
+		let landed = false;
+		for (let i = 0; i < tracks.length; i++) {
+			const overlap = tracks[i].some(b => {
+				const br = ranges[b.id];
+				return !(r.max < br.min || r.min > br.max);
+			});
+			if (!overlap) {
+				tracks[i].push(c);
+				placed.push({ id: c.id, display: c.display, track: i, range: r });
+				landed = true;
+				break;
+			}
+		}
+		if (landed) return;
+		if (tracks.length < BRACKET_TRACKS_DEFAULT) {
+			tracks.push([c]);
+			placed.push({ id: c.id, display: c.display, track: tracks.length - 1, range: r });
+		} else {
+			dropped.push({ id: c.id, display: c.display, range: r });
+		}
+	});
+
+	return { placed, dropped, trackCount: tracks.length };
 }
 
 function render(scene) {
@@ -988,12 +1114,15 @@ function render(scene) {
 		halo.setAttribute('stroke-width', STYLE.edgeStrokeWidth);
 		g.appendChild(halo);
 
-		// Show labels for all tips; hide mrca labels on internal nodes only.
-		// Also hide the other_<...> label while its peek is open — the peek
-		// itself already shows what's inside, so the "(N)" suffix would be
-		// redundant and the label would collide with the peek's lead line.
+		// Show labels for tips only. Internal-node names are surfaced via
+		// the bracket gutter on the right (see computeBracketState), so an
+		// in-tree label would just duplicate the bracket label and crowd
+		// the tree. Also hide the other_<...> label while its peek is open
+		// — the peek itself already shows what's inside, so the "(N)"
+		// suffix would be redundant and the label would collide with the
+		// peek's lead line.
 		const peekOpenForThisNode = peekState && peekState.nodeId === n.id;
-		if ((isTip || !looksMrca) && !peekOpenForThisNode) {
+		if (isTip && !peekOpenForThisNode) {
 			const text = document.createElementNS(NS, 'text');
 			text.setAttribute('x', STYLE.labelDx);
 			text.setAttribute('y', STYLE.labelDy);
@@ -1086,6 +1215,50 @@ function render(scene) {
 
 		svg.appendChild(g);
 	});
+
+	// Internal-clade brackets — rendered only at rest. Mid-transition the
+	// placement is meaningless because clade ranges only describe the
+	// destination tree's tip y-positions; fade in over the last few percent
+	// of the transition so they appear with the tree settling.
+	if (bracketState && bracketState.placed.length > 0 && currentT >= BRACKET_REST_THRESHOLD) {
+		const fadeOpacity = (currentT - BRACKET_REST_THRESHOLD) /
+		                    (1 - BRACKET_REST_THRESHOLD);
+
+		// Right edge of the rendered tip-label band sets the gutter origin.
+		const charW = STYLE.labelFontSize * 0.5;
+		let labelEndMax = -Infinity;
+		scene.nodes.forEach(n => {
+			if (n.toOpacity < 0.5) return;
+			if (!n.isTipNew) return;
+			const labelEnd = n.to.x + STYLE.labelDx + (n.display || '').length * charW;
+			if (labelEnd > labelEndMax) labelEndMax = labelEnd;
+		});
+		if (!isFinite(labelEndMax)) labelEndMax = 0;
+		const trackBaseX = labelEndMax + BRACKET_GUTTER_PAD;
+
+		const layer = document.createElementNS(NS, 'g');
+		layer.setAttribute('class', 'bracket-layer');
+		layer.setAttribute('opacity', fadeOpacity);
+
+		bracketState.placed.forEach(p => {
+			const bx = trackBaseX + p.track * BRACKET_TRACK_W;
+			const path = document.createElementNS(NS, 'path');
+			path.setAttribute('d', `M ${bx} ${p.range.min} L ${bx} ${p.range.max}`);
+			path.setAttribute('class', 'bracket-line');
+			path.setAttribute('stroke-width', STYLE.hollowStrokeWidth);
+			layer.appendChild(path);
+
+			const txt = document.createElementNS(NS, 'text');
+			txt.setAttribute('x', bx + BRACKET_LABEL_GAP);
+			txt.setAttribute('y', (p.range.min + p.range.max) / 2);
+			txt.setAttribute('font-size', STYLE.labelFontSize);
+			txt.setAttribute('class', 'bracket-label');
+			txt.setAttribute('dominant-baseline', 'central');
+			txt.textContent = p.display || p.id;
+			layer.appendChild(txt);
+		});
+		svg.appendChild(layer);
+	}
 
 	// Peek overlay is drawn last so it sits on top of the tree.
 	if (peekState) renderPeek();
@@ -1370,6 +1543,7 @@ let currentT = 0;
 
 function init() {
 	scene = buildScene(t1, t2);
+	bracketState = computeBracketState(t2, scene);
 	fitViewBox(scene);
 	capSizesForViewport();
 	setT(0);
@@ -1433,9 +1607,15 @@ function fitViewBox(scene) {
 	// the topmost / bottommost tip labels and annotation numbers from butting
 	// up against the SVG border.
 	const margin      = STYLE.labelFontSize;
+	// Reserve room for the bracket gutter (one column per occupied track,
+	// plus the pad between the tip labels and the first track).
+	let bracketGutter = 0;
+	if (bracketState && bracketState.trackCount > 0) {
+		bracketGutter = BRACKET_GUTTER_PAD + bracketState.trackCount * BRACKET_TRACK_W;
+	}
 	const vx = minX - margin;
 	const vy = minY - margin;
-	const vw = (maxX - minX) + labelMargin + margin * 2;
+	const vw = (maxX - minX) + labelMargin + bracketGutter + margin * 2;
 	const vh = (maxY - minY) + margin * 2;
 	svg.setAttribute('viewBox', `${vx} ${vy} ${vw} ${vh}`);
 }

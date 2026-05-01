@@ -355,6 +355,12 @@ input[type=range] { width: 300px; vertical-align: middle; }
 .annot-support  { fill: var(--annot-support); }
 .annot-conflict { fill: var(--annot-conflict); }
 
+/* Internal-clade brackets: vertical bar + label in the gutter to the
+   right of the tip labels. Both share the link colour so they read as
+   "annotations" layered over the tree, distinct from the tip text. */
+.bracket-line   { stroke: var(--text-link); fill: none; }
+.bracket-label  { fill: var(--text-link); font-weight: 600; }
+
 /* In-flight tree fetch indicator: a centred spinning ring while a request
    is on the wire. Toggled via body.loading. Translucent track so the tree
    underneath stays visible. Centring uses negative margins (not

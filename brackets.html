@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Clade brackets prototype</title>
+<style>
+  /* ── Theme tokens — same set as viewer.css so the prototype matches
+     the main viewer (light mode default, dark via prefers-color-scheme). */
+  :root {
+    --bg:             #fff;
+    --bg-panel:       #fff;
+    --text:           #333;
+    --text-dim:       #777;
+    --text-link:      #36a;
+    --border:         #ccc;
+    --tree-stroke:    #333;
+    --hover-bg:       #d6e6f8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg:           #1a1a1a;
+      --bg-panel:     #242424;
+      --text:         #ddd;
+      --text-dim:     #999;
+      --text-link:    #6aa3df;
+      --border:       #444;
+      --tree-stroke:  #88b1d8;
+      --hover-bg:     #2c4060;
+    }
+  }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    margin: 24px; color: var(--text); background: var(--bg);
+  }
+  h1 { font-size: 18px; font-weight: 600; margin: 0 0 4px; }
+  p.intro { font-size: 12px; color: var(--text-dim); max-width: 900px; margin: 0 0 12px; }
+  code {
+    background: var(--hover-bg); padding: 0 4px; border-radius: 2px;
+    font-size: 11px; color: var(--text);
+  }
+
+  form.controls {
+    font-size: 12px; color: var(--text-dim); margin: 8px 0 12px;
+    display: flex; flex-wrap: wrap; gap: 10px; align-items: baseline;
+  }
+  form.controls input,
+  form.controls select,
+  form.controls button {
+    font: inherit; padding: 3px 6px;
+    background: var(--bg-panel); color: var(--text);
+    border: 1px solid var(--border);
+  }
+  form.controls input.short  { width: 5em;  }
+  form.controls input.med    { width: 9em;  }
+  form.controls button       { padding: 4px 14px; cursor: pointer; }
+
+  svg#canvas {
+    display: block;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--tree-stroke);
+  }
+
+  /* Tree elements — match the main viewer: edges and node markers
+     inherit currentColor (= var(--tree-stroke)); tip labels use --text. */
+  .edge              { stroke: currentColor; stroke-width: 1; fill: none; }
+  .tip-circle        { fill: currentColor; }
+  .tip-circle.hollow { fill: var(--bg); stroke: currentColor; stroke-width: 1.4; }
+  .internal-dot      { fill: currentColor; opacity: 0.6; }
+  .tip-label         { fill: var(--text); }
+
+  /* Brackets — single accent colour so they read as "annotations" over
+     the tree. Per-track CSS classes (.t0/.t1/.t2) kept in case you want
+     to vary shades later; default they're all the same. */
+  .bracket-line   { stroke-width: 1.6; fill: none; stroke: var(--text-link); }
+  .bracket-label  { font-weight: 600; fill: var(--text-link); stroke: none; }
+
+  #stats {
+    font-size: 11px; color: var(--text-dim); margin-top: 12px;
+    line-height: 1.6;
+  }
+  #stats .placed   { color: var(--text-link); }
+  #stats .dropped  { color: var(--text-dim); }
+</style>
+</head>
+<body>
+
+<h1>Clade-bracket placement prototype</h1>
+<p class="intro">
+  Renders a tree from <code>tree.php</code>, then places named multi-tip internal
+  clades as vertical brackets in tracks to the right of the tip labels. Filter:
+  drop anonymous mrca internals, drop monotypic (single-child) internals, drop
+  brackets covering &lt; 2 tips. Placement: greedy interval colouring. Brackets
+  that don't fit in the track budget are listed under "dropped".
+</p>
+
+<form class="controls" onsubmit="rebuild();return false;">
+  <label>taxon
+    <input id="in-taxon" class="med" type="text" value="ott452461">
+  </label>
+  <label>k
+    <input id="in-k" class="short" type="number" value="30" min="2" max="200">
+  </label>
+  <label>tracks
+    <input id="in-tracks" class="short" type="number" value="1" min="1" max="6">
+  </label>
+  <label>sort
+    <select id="in-sort">
+      <option value="depth-asc"  selected>shallowest first</option>
+      <option value="depth-desc">deepest first</option>
+      <option value="size-desc">largest first</option>
+      <option value="size-asc">smallest first</option>
+    </select>
+  </label>
+  <label>min tips
+    <input id="in-mintips" class="short" type="number" value="2" min="1" max="50">
+  </label>
+  <button type="submit">render</button>
+</form>
+
+<svg id="canvas"></svg>
+<div id="stats"></div>
+
+<script>
+const NS = 'http://www.w3.org/2000/svg';
+
+// ── Layout constants (pure pixels). Adjust to taste; the SVG is sized
+// to whatever's needed to fit the cladogram + the tip labels + N
+// bracket tracks of TRACK_W each.
+const TREE_W   = 480;
+const LABEL_W  = 240;     // tip label gutter (between tree tips and brackets)
+const TRACK_W  = 110;     // each bracket track
+const MARGIN_X = 28;
+const MARGIN_Y = 24;
+const ROW_PX   = 18;      // minimum vertical room per tip
+const FONT_TIP = 13;      // matches the main viewer's tip-label cap
+const FONT_BR  = 13;
+const TIP_TRUNC = 28;
+const BR_TRUNC  = 22;
+
+// ── Apply ?taxon= / ?k= / ?tracks= URL params on load ──
+(function applyUrlParams() {
+  const p = new URLSearchParams(location.search);
+  if (p.has('taxon'))  document.getElementById('in-taxon').value   = p.get('taxon');
+  if (p.has('k'))      document.getElementById('in-k').value       = p.get('k');
+  if (p.has('tracks')) document.getElementById('in-tracks').value  = p.get('tracks');
+  if (p.has('sort'))   document.getElementById('in-sort').value    = p.get('sort');
+  if (p.has('mintips')) document.getElementById('in-mintips').value = p.get('mintips');
+})();
+
+async function rebuild() {
+  const taxon   = document.getElementById('in-taxon').value.trim() || 'ott452461';
+  const k       = parseInt(document.getElementById('in-k').value, 10) || 30;
+  const tracks  = parseInt(document.getElementById('in-tracks').value, 10) || 3;
+  const sort    = document.getElementById('in-sort').value;
+  const minTips = parseInt(document.getElementById('in-mintips').value, 10) || 2;
+
+  let data;
+  try {
+    const r = await fetch('tree.php?taxon=' + encodeURIComponent(taxon) + '&k=' + k);
+    data = await r.json();
+  } catch (e) {
+    document.getElementById('stats').textContent = 'fetch failed: ' + e.message;
+    return;
+  }
+  render(data, tracks, sort, minTips);
+}
+
+function render(data, maxTracks, sortMode, minTips) {
+  const nodes = data.nodes;
+  const edges = data.edges || [];
+
+  // Adjacency.
+  const children = {};
+  edges.forEach(e => {
+    if (!children[e.source]) children[e.source] = [];
+    children[e.source].push(e.target);
+  });
+
+  // Spanning-tree depth via BFS from the displayed root. tree.php
+  // doesn't emit a depth field, so we reconstruct it here. Root has
+  // depth 0; each child gets parent.depth + 1.
+  const depthInTree = {};
+  if (data.displayed_root_id && nodes[data.displayed_root_id]) {
+    depthInTree[data.displayed_root_id] = 0;
+    const q = [data.displayed_root_id];
+    while (q.length) {
+      const id = q.shift();
+      (children[id] || []).forEach(c => {
+        if (!(c in depthInTree)) {
+          depthInTree[c] = depthInTree[id] + 1;
+          q.push(c);
+        }
+      });
+    }
+  }
+
+  // For every node, compute the y-range of its descendant tips and the
+  // tip-count. Memoised — straight DFS.
+  const ranges = {};
+  function rangeOf(id) {
+    if (ranges[id]) return ranges[id];
+    const kids = children[id] || [];
+    if (kids.length === 0) {
+      const n = nodes[id];
+      return ranges[id] = { min: n.y, max: n.y, tips: 1 };
+    }
+    let min = Infinity, max = -Infinity, tips = 0;
+    kids.forEach(c => {
+      const r = rangeOf(c);
+      if (r.min < min) min = r.min;
+      if (r.max > max) max = r.max;
+      tips += r.tips;
+    });
+    return ranges[id] = { min, max, tips };
+  }
+  Object.keys(nodes).forEach(rangeOf);
+
+  // ── Filter to candidate clades ──
+  // Keep only "real" named taxa (id matches /^ott\d+$/) — excludes
+  // mrcaottXottY (anonymous), other_<…> (synthetic), stub. Drop monotypic
+  // internals (a single child in this view), drop the displayed root
+  // (its bracket would span every tip and add no information), drop
+  // anything below the tip-count threshold.
+  let candidates = Object.values(nodes).filter(n => {
+    if (n.type !== 'internal') return false;
+    if (!/^ott\d+$/.test(n.id)) return false;
+    if (n.id === data.displayed_root_id) return false;
+    const kids = children[n.id] || [];
+    if (kids.length < 2) return false;
+    return ranges[n.id].tips >= minTips;
+  });
+
+  // ── Sort by chosen priority (depth = spanning-tree depth, computed
+  //   above; not the supertree depth field, which isn't in the JSON).
+  candidates.sort((a, b) => {
+    const ra = ranges[a.id], rb = ranges[b.id];
+    const da = depthInTree[a.id] || 0;
+    const db = depthInTree[b.id] || 0;
+    if (sortMode === 'depth-asc')  return da - db;
+    if (sortMode === 'depth-desc') return db - da;
+    if (sortMode === 'size-desc')  return rb.tips - ra.tips;
+    if (sortMode === 'size-asc')   return ra.tips - rb.tips;
+    return 0;
+  });
+
+  // ── Greedy interval colouring ──
+  // For each candidate, find the leftmost track whose existing brackets
+  // don't overlap. If none of the maxTracks tracks works, drop it.
+  const tracks  = [];
+  const placed  = [];
+  const dropped = [];
+  candidates.forEach(c => {
+    const r = ranges[c.id];
+    let landed = false;
+    for (let i = 0; i < tracks.length; i++) {
+      const overlap = tracks[i].some(b => {
+        const br = ranges[b.id];
+        return !(r.max < br.min || r.min > br.max);
+      });
+      if (!overlap) {
+        tracks[i].push(c);
+        placed.push({ ...c, track: i, range: r });
+        landed = true;
+        break;
+      }
+    }
+    if (landed) return;
+    if (tracks.length < maxTracks) {
+      tracks.push([c]);
+      placed.push({ ...c, track: tracks.length - 1, range: r });
+    } else {
+      dropped.push({ ...c, range: r });
+    }
+  });
+
+  // ── Render ──
+  const all = Object.values(nodes);
+  const tipNodes = all.filter(n => (children[n.id] || []).length === 0);
+  let minDataX = Infinity, maxDataX = -Infinity;
+  let minDataY = Infinity, maxDataY = -Infinity;
+  all.forEach(n => {
+    if (n.x < minDataX) minDataX = n.x;
+    if (n.x > maxDataX) maxDataX = n.x;
+    if (n.y < minDataY) minDataY = n.y;
+    if (n.y > maxDataY) maxDataY = n.y;
+  });
+  const xRange = Math.max(1e-3, maxDataX - minDataX);
+  const yRange = Math.max(1e-3, maxDataY - minDataY);
+
+  // Tree-body height: pixel-rate driven by tip count so labels never collide.
+  const treePxH = Math.max(tipNodes.length * ROW_PX, 200);
+  const svgH    = treePxH + 2 * MARGIN_Y;
+  const svgW    = MARGIN_X + TREE_W + LABEL_W + tracks.length * TRACK_W + MARGIN_X;
+
+  const pxX = dx => MARGIN_X + (dx - minDataX) / xRange * TREE_W;
+  const pxY = dy => MARGIN_Y + (dy - minDataY) / yRange * treePxH;
+
+  const svg = document.getElementById('canvas');
+  svg.setAttribute('width',  svgW);
+  svg.setAttribute('height', svgH);
+  svg.replaceChildren();
+
+  // Cladogram edges (L-shape).
+  edges.forEach(e => {
+    const s = nodes[e.source], t = nodes[e.target];
+    if (!s || !t) return;
+    const sx = pxX(s.x), sy = pxY(s.y);
+    const tx = pxX(t.x), ty = pxY(t.y);
+    const path = document.createElementNS(NS, 'path');
+    path.setAttribute('d', 'M ' + sx + ' ' + sy + ' L ' + sx + ' ' + ty + ' L ' + tx + ' ' + ty);
+    path.setAttribute('class', 'edge');
+    svg.appendChild(path);
+  });
+
+  // Node markers + tip labels.
+  all.forEach(n => {
+    const isTip = (children[n.id] || []).length === 0;
+    const cx = pxX(n.x), cy = pxY(n.y);
+    const c = document.createElementNS(NS, 'circle');
+    c.setAttribute('cx', cx);
+    c.setAttribute('cy', cy);
+    c.setAttribute('r', isTip ? 2 : 1.4);
+    if (isTip) {
+      const hollow = !n.supertree_leaf;
+      c.setAttribute('class', hollow ? 'tip-circle hollow' : 'tip-circle');
+    } else {
+      c.setAttribute('class', 'internal-dot');
+    }
+    svg.appendChild(c);
+
+    if (isTip) {
+      const t = document.createElementNS(NS, 'text');
+      t.setAttribute('x', cx + 6);
+      t.setAttribute('y', cy + 4);
+      t.setAttribute('font-size', FONT_TIP);
+      t.setAttribute('class', 'tip-label');
+      t.textContent = truncate(n.display || n.id, TIP_TRUNC);
+      svg.appendChild(t);
+    }
+  });
+
+  // Bracket gutter — one column per track, vertical line capped at top
+  // and bottom of the tip range, label centred on the bracket.
+  const trackBaseX = MARGIN_X + TREE_W + LABEL_W;
+  placed.forEach(p => {
+    const bx  = trackBaseX + p.track * TRACK_W + 14;
+    const y1  = pxY(p.range.min);
+    const y2  = pxY(p.range.max);
+    const cls = 't' + (p.track % 3);
+
+    const path = document.createElementNS(NS, 'path');
+    path.setAttribute('d', 'M ' + bx + ' ' + y1 + ' L ' + bx + ' ' + y2);
+    path.setAttribute('class', 'bracket-line ' + cls);
+    svg.appendChild(path);
+
+    const txt = document.createElementNS(NS, 'text');
+    txt.setAttribute('x', bx + 6);
+    txt.setAttribute('y', (y1 + y2) / 2 + 4.5);
+    txt.setAttribute('font-size', FONT_BR);
+    txt.setAttribute('class', 'bracket-label ' + cls);
+    txt.textContent = truncate(p.display || p.id, BR_TRUNC);
+    svg.appendChild(txt);
+  });
+
+  // Stats at the bottom — useful for tuning the sort / tracks parameters.
+  const stats = document.getElementById('stats');
+  const placedStr  = placed .map(p => p.display + ' [t' + p.track + ', ' + p.range.tips + ' tips, depth ' + (depthInTree[p.id] || 0) + ']').join(',  ');
+  const droppedStr = dropped.map(d => d.display + ' [' + d.range.tips + ' tips, depth ' + (depthInTree[d.id] || 0) + ']').join(',  ');
+  stats.innerHTML =
+    '<strong>' + candidates.length + '</strong> candidate clades · ' +
+    '<strong>' + placed.length + '</strong> placed in <strong>' + tracks.length + '</strong> tracks · ' +
+    '<strong>' + dropped.length + '</strong> dropped<br>' +
+    '<span class="placed">placed:</span> <code>' + (placedStr || '(none)') + '</code><br>' +
+    '<span class="dropped">dropped:</span> <code>' + (droppedStr || '(none)') + '</code>';
+}
+
+function truncate(s, max) {
+  s = String(s == null ? '' : s);
+  return s.length <= max ? s : s.slice(0, max - 1) + '…';
+}
+
+rebuild();
+</script>
+
+</body>
+</html>
