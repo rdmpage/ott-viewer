@@ -56,6 +56,8 @@ order is implied by emission order. `edges` is a flat list of
       "type":           "internal",
       "supertree_leaf": false,
       "weight":         231,
+      "depth":          0,
+      "tip_count":      30,
       "x":              14.3,
       "y":              137.5,
       "annotations": {
@@ -150,6 +152,23 @@ order is implied by emission order. `edges` is a flat list of
    viewer needs both: `focal` for the user-aimed-at point (used as the
    enter-anchor in transitions, and for highlighting); `displayed_root`
    for layout / breadcrumb / "tree rooted at" context.
+
+7. **`depth` and `tip_count` on every node — convenience fields for
+   third-party consumers.** Both are derivable from `edges` (BFS from
+   `displayed_root_id` for depth; post-order DFS for tip_count), but
+   we ship them precomputed so any client can pick clades by size or
+   level without a tree traversal pass.
+   - `depth`: distance from `displayed_root_id` along the displayed
+     edges. Root is `0`, its children `1`, etc. The upstream stub (if
+     present) is `-1` because it sits one column to the left in the
+     layout. Unreachable nodes (shouldn't occur in practice) are `null`.
+   - `tip_count`: number of leaf / `other_` descendants in the
+     **displayed** tree. Tips and `other_*` placeholders are `1`. Note
+     this is *not* `weight`: `weight` counts descendants in the full
+     supertree (so a collapsed subtree with 200 hidden tips reports
+     `weight: 200, tip_count: 1`). Choose accordingly — `tip_count`
+     for "what fraction of this view does this clade cover", `weight`
+     for "how big is this clade in OTT overall".
 
 ### Circle rule (already documented)
 

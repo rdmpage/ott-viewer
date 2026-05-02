@@ -914,6 +914,10 @@ function kindColor(kind) {
 // track. Pure function over the destination tree + the current scene (used
 // only to read each node's at-rest y, so brackets line up with the rendered
 // tips). Returns { placed, dropped, trackCount } or null.
+//
+// Depth and tip count come from `tree.php` directly (n.depth, n.tip_count) —
+// we used to BFS / DFS them client-side, but the server now emits them so
+// any consumer of the JSON gets the same fields without re-deriving.
 function computeBracketState(tree, scene) {
 	if (!tree || !tree.nodes) return null;
 	const nodes = tree.nodes;
@@ -928,42 +932,26 @@ function computeBracketState(tree, scene) {
 		children[e.source].push(e.target);
 	});
 
-	// Spanning-tree depth via BFS from displayed_root_id (tree.php doesn't
-	// emit a depth field). Used purely to pick a sort order for placement.
-	const depthInTree = {};
-	if (tree.displayed_root_id && nodes[tree.displayed_root_id]) {
-		depthInTree[tree.displayed_root_id] = 0;
-		const q = [tree.displayed_root_id];
-		while (q.length) {
-			const id = q.shift();
-			(children[id] || []).forEach(c => {
-				if (!(c in depthInTree)) {
-					depthInTree[c] = depthInTree[id] + 1;
-					q.push(c);
-				}
-			});
-		}
-	}
-
-	// Per-node y-range (clade extent) + descendant-tip count. Memoised DFS.
-	const ranges = {};
-	function rangeOf(id) {
-		if (ranges[id]) return ranges[id];
+	// Per-node y-range (clade extent) — memoised DFS over the displayed
+	// edges using the scene's at-rest y. Tip count comes from tree.php
+	// directly (n.tip_count), so we only need min/max here.
+	const yRanges = {};
+	function yRangeOf(id) {
+		if (yRanges[id]) return yRanges[id];
 		const kids = children[id] || [];
 		const yPos = (toById[id] && toById[id].y != null)
 			? toById[id].y
 			: ((nodes[id] && nodes[id].y) || 0);
-		if (kids.length === 0) return ranges[id] = { min: yPos, max: yPos, tips: 1 };
-		let min = Infinity, max = -Infinity, tips = 0;
+		if (kids.length === 0) return yRanges[id] = { min: yPos, max: yPos };
+		let min = Infinity, max = -Infinity;
 		kids.forEach(c => {
-			const r = rangeOf(c);
+			const r = yRangeOf(c);
 			if (r.min < min) min = r.min;
 			if (r.max > max) max = r.max;
-			tips += r.tips;
 		});
-		return ranges[id] = { min, max, tips };
+		return yRanges[id] = { min, max };
 	}
-	Object.keys(nodes).forEach(rangeOf);
+	Object.keys(nodes).forEach(yRangeOf);
 
 	// Candidate filter: keep named ott* internals only, drop displayed root,
 	// drop monotypic, drop anything below the tip-count threshold.
@@ -973,15 +961,15 @@ function computeBracketState(tree, scene) {
 		if (n.id === tree.displayed_root_id) return false;
 		const kids = children[n.id] || [];
 		if (kids.length < 2) return false;
-		return ranges[n.id].tips >= BRACKET_MIN_TIPS;
+		return (n.tip_count | 0) >= BRACKET_MIN_TIPS;
 	});
 
 	candidates.sort((a, b) => {
-		const da = depthInTree[a.id] || 0, db = depthInTree[b.id] || 0;
+		const da = a.depth | 0, db = b.depth | 0;
 		if (BRACKET_SORT === 'depth-asc')  return da - db;
 		if (BRACKET_SORT === 'depth-desc') return db - da;
-		if (BRACKET_SORT === 'size-desc')  return ranges[b.id].tips - ranges[a.id].tips;
-		if (BRACKET_SORT === 'size-asc')   return ranges[a.id].tips - ranges[b.id].tips;
+		if (BRACKET_SORT === 'size-desc')  return (b.tip_count | 0) - (a.tip_count | 0);
+		if (BRACKET_SORT === 'size-asc')   return (a.tip_count | 0) - (b.tip_count | 0);
 		return 0;
 	});
 
@@ -990,11 +978,11 @@ function computeBracketState(tree, scene) {
 	const placed  = [];
 	const dropped = [];
 	candidates.forEach(c => {
-		const r = ranges[c.id];
+		const r = yRanges[c.id];
 		let landed = false;
 		for (let i = 0; i < tracks.length; i++) {
 			const overlap = tracks[i].some(b => {
-				const br = ranges[b.id];
+				const br = yRanges[b.id];
 				return !(r.max < br.min || r.min > br.max);
 			});
 			if (!overlap) {

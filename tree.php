@@ -92,6 +92,28 @@ function fetch_annotations($stmt, $external_id)
 	return $out;
 }
 
+// Memoised post-order DFS for the descendant-tip count in the displayed
+// tree (i.e. summary tree, not the full supertree — the supertree count
+// lives on `weight`). Tips and other_* placeholders both count as 1; an
+// internal's tip_count is the sum of its children's. The stub above the
+// displayed root inherits the displayed root's count.
+function compute_tip_count($id, &$children, &$cache)
+{
+	if (isset($cache[$id])) return $cache[$id];
+	if (!isset($children[$id]) || count($children[$id]) === 0)
+	{
+		$cache[$id] = 1;
+		return 1;
+	}
+	$sum = 0;
+	foreach ($children[$id] as $kid)
+	{
+		$sum += compute_tip_count($kid, $children, $cache);
+	}
+	$cache[$id] = $sum;
+	return $sum;
+}
+
 // Top-level container. We use stdClass + dynamic keys so the nodes map
 // serializes as a JSON object (not an array), in canonical (insertion)
 // order.
@@ -228,6 +250,64 @@ if (isset($root_supertree_node->parentTaxon) && $root_supertree_node->parentTaxo
 		$stub_edge->target = $out->displayed_root_id;
 		$out->edges[] = $stub_edge;
 	}
+}
+
+// Per-node depth + tip_count, computed from the finalised edge list (incl.
+// stub edge if present). Both are convenience fields so external clients
+// don't have to re-derive them — `depth` saves a BFS, `tip_count` saves
+// a post-order DFS, and unlike `weight` it reflects the displayed tree
+// rather than the full supertree.
+//
+//   depth      = distance from displayed_root_id (root = 0, descendants
+//                1, 2, …). The stub upstream of the root is -1 because
+//                it sits one step to the left in the layout.
+//   tip_count  = number of leaf / other_ descendants in the displayed
+//                tree. Tips and other_* placeholders are 1.
+$children_adj = array();
+foreach ($out->edges as $e)
+{
+	if (!isset($children_adj[$e->source])) $children_adj[$e->source] = array();
+	$children_adj[$e->source][] = $e->target;
+}
+
+foreach (get_object_vars($out->nodes) as $nid => $node)
+{
+	$out->nodes->$nid->depth = null;
+}
+if (isset($out->nodes->{$out->displayed_root_id}))
+{
+	$out->nodes->{$out->displayed_root_id}->depth = 0;
+	$queue = array($out->displayed_root_id);
+	while (count($queue) > 0)
+	{
+		$cur = array_shift($queue);
+		$cur_depth = $out->nodes->$cur->depth;
+		if (!isset($children_adj[$cur])) continue;
+		foreach ($children_adj[$cur] as $kid)
+		{
+			if (isset($out->nodes->$kid) && $out->nodes->$kid->depth === null)
+			{
+				$out->nodes->$kid->depth = $cur_depth + 1;
+				$queue[] = $kid;
+			}
+		}
+	}
+}
+foreach ($out->edges as $e)
+{
+	if ($e->target === $out->displayed_root_id
+		&& isset($out->nodes->{$e->source})
+		&& isset($out->nodes->{$e->source}->type)
+		&& $out->nodes->{$e->source}->type === 'stub')
+	{
+		$out->nodes->{$e->source}->depth = -1;
+	}
+}
+
+$tip_count_cache = array();
+foreach (get_object_vars($out->nodes) as $nid => $node)
+{
+	$out->nodes->$nid->tip_count = compute_tip_count($nid, $children_adj, $tip_count_cache);
 }
 
 get_node_coordinates($out);

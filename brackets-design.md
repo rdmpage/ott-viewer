@@ -46,12 +46,11 @@ For the destination tree of each navigation:
    the placement is meaningless because the y-range only describes the
    destination tree.
 
-The per-node y-range and tip count come from a memoised DFS over
-`tree.edges`; the sort key (depth) comes from a BFS from
-`tree.displayed_root_id` (because `tree.php` doesn't emit a depth
-field). All ranges are computed against `scene.nodes[].to.y` so the
-brackets line up with exactly where the tips will render at
-`currentT = 1`.
+The per-node y-range comes from a memoised DFS over `tree.edges`; the
+tip count and depth come from `tree.php` directly (`n.tip_count` and
+`n.depth` — see `viewer-pipeline-design.md` for the schema). y-ranges
+are computed against `scene.nodes[].to.y` so the brackets line up
+with exactly where the tips will render at `currentT = 1`.
 
 ## Configurable knobs
 
