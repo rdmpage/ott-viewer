@@ -89,6 +89,8 @@ async function navigateTo(taxon, addToHistory) {
 	}
 
 	closePeek();                 // any open peek belongs to the previous tree
+	closeInfoPanel();            // panel belongs to the old focal; clear it now so
+	                             // the new view's clade labels aren't obscured
 	t1 = currentTree;
 	t2 = newTree;
 	scene = buildScene(t1, t2);
@@ -133,6 +135,7 @@ async function replaceTree(taxon, addToHistory) {
 	}
 
 	closePeek();
+	closeInfoPanel();
 	stableYScale = null;        // refit for the new tree
 	currentTree = newTree;
 	t1 = newTree;
@@ -143,10 +146,12 @@ async function replaceTree(taxon, addToHistory) {
 
 // ─── Right-hand info panel + breadcrumb trail ───────────────────────────────
 // Panel: openInfoPanel(html) replaces contents and shows; closeInfoPanel()
-// hides. Breadcrumb: a sequential list of every focal the user has landed
-// on this session, deduplicated against the previous entry. Both are
-// driven by afterNavigationLanded(), called once per navigation (initial
-// load, click navigation, and back/forward).
+// hides. Single-click on a node shows the panel for that node; navigation
+// (double-click, search, popstate) hides it via the closeInfoPanel() calls
+// in navigateTo / replaceTree, so a new view's clade labels aren't obscured.
+// Breadcrumb: sequential list of every focal the user has landed on this
+// session, deduplicated against the previous entry, driven by
+// afterNavigationLanded() on every navigation.
 function openInfoPanel(html) {
 	const panel   = document.getElementById('info-panel');
 	const content = document.getElementById('info-content');
@@ -297,7 +302,9 @@ function afterNavigationLanded(tree) {
 
 	pushTrail(focal);
 	renderHoptree();
-	openInfoPanel(renderFocalInfo(focal));
+	// The info panel is no longer auto-opened on navigation — it appears
+	// only when the user single-clicks a node, and persists until closed
+	// directly or until the next navigation hides it again.
 }
 
 // Soft cap on the navigation trail. The hoptree shows the spanning
