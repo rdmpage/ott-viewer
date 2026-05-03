@@ -66,7 +66,7 @@ $k = isset($_GET['k']) ? max(2, (int)$_GET['k']) : 0;
 			</a>
 			<a class="featured-item" href="?taxon=mrcaott725ott4345"     role="menuitem">
 				<img src="images/Streptococcaceae.svg" alt="">
-				<span>Streptococcaceae</span>
+				<span>Streptococcus</span>
 			</a>
 		</div>
 	</details>
