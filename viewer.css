@@ -254,7 +254,7 @@ svg {
 .hoptree-label          { fill: var(--text); pointer-events: none; }
 .hoptree-label.focal    { fill: #fff; font-weight: 600; }
 .hoptree-edge           { stroke: var(--text-dim); stroke-width: 1.2; fill: none; opacity: 0.6; }
-.hoptree-node-g         { cursor: pointer; }
+.hoptree-node-g         { cursor: pointer; touch-action: manipulation; user-select: none; -webkit-user-select: none; }
 .hoptree-node-g:hover .hoptree-rect { stroke: var(--text-link); stroke-width: 2.5; }
 
 #info-content p     { margin: 0.3em 0; }
@@ -331,6 +331,13 @@ input[type=range] { width: 300px; vertical-align: middle; }
    Animating opacity on a halo is universal. */
 .tree-node {
 	cursor: pointer;
+	/* iOS: opt out of double-tap-to-zoom so two quick taps both deliver
+	   `click` events (the second is otherwise eaten by the zoom gesture).
+	   Also removes the legacy 300 ms click delay so the in-JS double-tap
+	   window in handleNodeClick is reachable on touch devices. */
+	touch-action: manipulation;
+	user-select: none;
+	-webkit-user-select: none;
 }
 /* Hollow tree-node markers (other_* placeholders) — fill matches the
    page background so the interior reads as transparent in any theme,
@@ -365,7 +372,7 @@ input[type=range] { width: 300px; vertical-align: middle; }
    underneath. Hover bolds the label as the only interactive cue. */
 .peek-edge     { stroke: var(--tree-stroke); stroke-width: var(--ott-stroke, 1); fill: none; }
 .peek-label    { fill: var(--tree-stroke); pointer-events: none; }
-.peek-hit      { fill: transparent; cursor: pointer; }
+.peek-hit      { fill: transparent; cursor: pointer; touch-action: manipulation; user-select: none; -webkit-user-select: none; }
 .peek-hit:hover + .peek-label { font-weight: 600; }
 .peek-backdrop { fill: var(--peek-bg); stroke: none; }
 .peek-node-solid  { fill: var(--tree-stroke); }
