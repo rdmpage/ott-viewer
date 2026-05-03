@@ -29,10 +29,48 @@ $k = isset($_GET['k']) ? max(2, (int)$_GET['k']) : 0;
 </head>
 <body>
 
-<!-- Top navbar: Home | search | About. Search hits appear in a dropdown
-     beneath the input; clicking one navigates the tree to that taxon. -->
+<!-- Top navbar: Home | Featured | search | About. Search hits appear in a
+     dropdown beneath the input; Featured opens a 3×2 grid of taxon
+     thumbnails. Clicking either navigates the tree. -->
 <nav id="navbar">
 	<a href="?" class="nav-link nav-home">Home</a>
+
+	<!-- Featured-taxa dropdown. <details> gives native open/close + keyboard
+	     support; viewer.js wires outside-click and item-click to close it.
+	     Each .featured-item is href + svg + label; replace href with the
+	     real ott id and drop the matching SVG into the images/ directory.
+	     Filenames are descriptive so reordering slots doesn't break the
+	     mapping; add or remove rows freely (CSS grid auto-flows). -->
+	<details id="featured" class="nav-dropdown-wrap">
+		<summary class="nav-link">Featured</summary>
+		<div class="nav-dropdown" role="menu">
+			<a class="featured-item" href="?taxon=ott746703"             role="menuitem">
+				<img src="images/Afrotheria.svg" alt="">
+				<span>Afrotheria</span>
+			</a>
+			<a class="featured-item" href="?taxon=ott786678"             role="menuitem">
+				<img src="images/Araucariaceae.svg" alt="">
+				<span>Araucariaceae</span>
+			</a>
+			<a class="featured-item" href="?taxon=ott17233"              role="menuitem">
+				<img src="images/Dacrymycetes.svg" alt="">
+				<span>Dacrymycetales</span>
+			</a>
+			<a class="featured-item" href="?taxon=mrcaott21730ott43178"  role="menuitem">
+				<img src="images/Diopsidae.svg" alt="">
+				<span>Diopsidae</span>
+			</a>
+			<a class="featured-item" href="?taxon=ott81443"              role="menuitem">
+				<img src="images/Dromaiidae.svg" alt="">
+				<span>Palaeognathae</span>
+			</a>
+			<a class="featured-item" href="?taxon=mrcaott725ott4345"     role="menuitem">
+				<img src="images/Streptococcaceae.svg" alt="">
+				<span>Streptococcaceae</span>
+			</a>
+		</div>
+	</details>
+
 	<div id="search-bar">
 		<input type="text" id="search-input" placeholder="search taxon name…" autocomplete="off" spellcheck="false">
 		<ul id="search-results"></ul>

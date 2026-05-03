@@ -96,6 +96,64 @@ svg {
 .nav-link:hover { text-decoration: underline; }
 .nav-about { margin-left: auto; }
 
+/* Featured-taxa dropdown — <details>/<summary> for native disclosure,
+   absolutely-positioned panel below so it overlays the tree. The
+   summary marker is suppressed so the trigger reads as a plain link
+   matching the other nav items. */
+.nav-dropdown-wrap { position: relative; }
+.nav-dropdown-wrap > summary {
+	cursor: pointer;
+	list-style: none;
+}
+.nav-dropdown-wrap > summary::-webkit-details-marker { display: none; }
+.nav-dropdown {
+	display: grid;
+	grid-template-columns: repeat(3, auto);
+	gap: 0.5em;
+	position: absolute;
+	top: calc(100% + 0.3em);
+	left: 0;
+	background: var(--bg-panel);
+	color: var(--text);
+	border: 1px solid var(--border);
+	border-radius: 4px;
+	padding: 0.6em;
+	box-shadow: 0 2px 12px var(--panel-shadow);
+	z-index: 20;
+}
+.featured-item {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	width: 80px;
+	padding: 0.3em;
+	border-radius: 4px;
+	color: var(--text);
+	text-decoration: none;
+	font-size: 0.8em;
+	line-height: 1.15;
+	text-align: center;
+}
+.featured-item img {
+	width: 64px;
+	height: 64px;
+	object-fit: contain;               /* preserve whole SVG; no cropping */
+	border-radius: 4px;
+	display: block;
+	background: var(--bg-elevated);    /* placeholder colour until images load */
+	border: 1px solid var(--border);
+	padding: 4px;                       /* small inset so SVG doesn't kiss the border */
+	box-sizing: border-box;
+}
+.featured-item:hover {
+	background: var(--hover-bg);
+	color: var(--hover-text);
+}
+.featured-item:hover img {
+	border-color: var(--text-link);
+}
+.featured-item span { margin-top: 0.35em; }
+
 /* About modal — native <dialog>, deliberately understated. No border;
    a soft shadow does the lifting. Capped at 70vw so the dialog stays
    compact even on wide screens. Sits in the upper third of the

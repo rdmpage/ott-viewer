@@ -320,6 +320,25 @@ function setupSearch() {
 
 setupSearch();
 
+// Featured dropdown — close when clicking outside the <details>, when
+// hitting Escape, or when a link inside is followed (browser does the
+// navigation; we just collapse the panel so it isn't left open after a
+// back-button trip).
+function setupFeatured() {
+	const det = document.getElementById('featured');
+	if (!det) return;
+	document.addEventListener('click', (ev) => {
+		if (!ev.target.closest('#featured')) det.open = false;
+	});
+	document.addEventListener('keydown', (ev) => {
+		if (ev.key === 'Escape') det.open = false;
+	});
+	det.querySelectorAll('a.featured-item').forEach(a => {
+		a.addEventListener('click', () => { det.open = false; });
+	});
+}
+setupFeatured();
+
 const navigationTrail = [];
 
 function afterNavigationLanded(tree) {
