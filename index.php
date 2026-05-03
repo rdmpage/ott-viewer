@@ -15,7 +15,9 @@ $default_taxon = 'ott93302';
 $taxon = isset($_GET['taxon']) ? trim($_GET['taxon']) : $default_taxon;
 if (!preg_match('/^[A-Za-z0-9_]+$/', $taxon)) $taxon = $default_taxon;
 
-$k = isset($_GET['k']) ? max(2, (int)$_GET['k']) : 30;
+// 0 = not specified — viewer.js's browseInit will then pick k from
+// idealK(window height) so the leaf budget tracks the available room.
+$k = isset($_GET['k']) ? max(2, (int)$_GET['k']) : 0;
 
 ?>
 <!DOCTYPE html>

@@ -53,7 +53,8 @@ async function loadTrees() {
 // transition (old == new) so the viewer renders statically until the user
 // clicks something.
 async function browseInit(taxon, k) {
-	currentK = k || 30;
+	// URL ?k=… overrides; otherwise pick from the window height.
+	currentK = (k && k > 0) ? k : idealK();
 	const tree = await fetchTree(taxon, currentK);
 	currentTree = tree;
 	t1 = tree;
@@ -110,26 +111,30 @@ window.addEventListener('popstate', () => {
 	if (taxon) navigateTo(taxon, false);
 });
 
-// Re-fit the layout when the window changes size. Without this the
-// existing viewBox is uniformly scaled into the new pixel rectangle, which
-// shrinks labels and nodes whenever the window gets vertically narrow
-// (e.g. on mobile). Clearing stableYScale lets buildScene recompute the
-// y-stretch for the new aspect; capSizesForViewport then re-caps font /
-// stroke / circle sizes against the new viewBox-to-pixel ratio. Debounced
-// so a drag-resize doesn't thrash the layout.
+// Re-fit the layout when the window changes size. If the new window
+// height implies a different k (per idealK), refetch the tree at the
+// new k — that keeps font size constant and lets the leaf budget adapt
+// to whatever vertical space is available. Otherwise just rebuild the
+// scene + refit. Debounced so drag-resize doesn't thrash.
 let resizeTimer = null;
 window.addEventListener('resize', () => {
 	if (resizeTimer) clearTimeout(resizeTimer);
-	resizeTimer = setTimeout(() => {
+	resizeTimer = setTimeout(async () => {
 		resizeTimer = null;
 		if (!t1 || !t2) return;             // no tree loaded yet
+		const newK = idealK();
+		if (newK !== currentK) {
+			currentK = newK;
+			await replaceTree(t2.focal_id, false);    // false = don't push history
+			return;
+		}
 		stableYScale = null;
 		scene = buildScene(t1, t2);
 		bracketState = computeBracketState(t2, scene);
 		fitViewBox(scene);
 		capSizesForViewport();
 		setT(currentT);
-	}, 120);
+	}, 250);
 });
 
 // Hard "jump to" — replace the displayed tree with a fresh layout for the
@@ -869,6 +874,28 @@ function updateScene(scene, t) {
 const svg = document.getElementById('canvas');
 const NS = 'http://www.w3.org/2000/svg';
 
+// ─── Layout invariants (issue #2) ───────────────────────────────────────────
+// Font is rendered at a constant pixel size and each leaf gets a constant
+// vertical pixel budget (one row). The leaf budget k is then DERIVED from
+// the available SVG height — see idealK() — so the tree always fills the
+// window vertically and resizing changes how many leaves fit, not how big
+// they are. Snapping to K_STEP avoids refetching on every pixel of drag.
+const FONT_PX = 16;
+const ROW_PX  = 20;          // font + breathing room
+const K_STEP  = 5;
+const K_MIN   = 10;
+const K_MAX   = 80;
+
+function idealK() {
+	const elPy = (svg && svg.clientHeight) || window.innerHeight || 600;
+	// Need (k-1) rows between leaves + 2 rows of top/bottom pad → k+1 rows
+	// total. Snap DOWN to a K_STEP boundary so we never overfill the SVG;
+	// rounding to nearest could pick a k that doesn't fit.
+	const maxK = Math.floor(elPy / ROW_PX) - 1;
+	const snap = Math.floor(maxK / K_STEP) * K_STEP;
+	return Math.max(K_MIN, Math.min(K_MAX, snap));
+}
+
 // ─── Style constants ────────────────────────────────────────────────────────
 // Node-label font size is the base; other sizes + offsets are derived from it
 // so scaling the labels scales the annotations and their placement in sync.
@@ -1573,12 +1600,12 @@ function init() {
 }
 
 // SVG sizes (font, circle radius, stroke width) are all in user-space
-// units, which the browser scales by the viewBox→pixel ratio. On a wide
-// laptop screen this scales everything up — fonts past 16 px, lines past
-// 4 px, etc. — making the visualization feel chunky. We compute the
-// actual user-space-to-pixel scale and cap each size so the rendered
-// pixel value never exceeds the targets below. Defaults still apply
-// when the viewport is small enough that no cap is needed.
+// units, which the browser scales by the viewBox→pixel ratio. We pin
+// each one to a target pixel size (in coord-space terms: pxTarget / scale)
+// so the rendered visualisation has consistent pixel dimensions across
+// every viewBox / window combination. Font is pinned to FONT_PX (issue #2:
+// fixed font, variable k); circle and stroke widths are pinned to small
+// constants chosen for legibility.
 function capSizesForViewport() {
 	const vb = svg.viewBox.baseVal;
 	if (!vb || vb.width <= 0 || vb.height <= 0) return;
@@ -1588,15 +1615,14 @@ function capSizesForViewport() {
 	);
 	if (!isFinite(px) || px <= 0) return;
 
-	// Convert a desired pixel ceiling into the equivalent user-space size.
 	const userUnits = pxTarget => pxTarget / px;
 
-	STYLE.labelFontSize     = Math.min(LABEL_FONT,    userUnits(16));   // ~12pt
-	STYLE.annotFontSize     = Math.max(STYLE.labelFontSize - 0.5, 1);
+	STYLE.labelFontSize     = userUnits(FONT_PX);
+	STYLE.annotFontSize     = userUnits(FONT_PX - 2);
 	STYLE.labelDy           = STYLE.labelFontSize * 0.30;
-	STYLE.circleR           = Math.min(NODE_R,        userUnits(6));    // ~12 px diameter
-	STYLE.edgeStrokeWidth   = Math.min(EDGE_STROKE,   userUnits(3));
-	STYLE.hollowStrokeWidth = Math.min(HOLLOW_STROKE, userUnits(2));
+	STYLE.circleR           = userUnits(5);
+	STYLE.edgeStrokeWidth   = userUnits(2);
+	STYLE.hollowStrokeWidth = userUnits(1);
 
 	// Pipe the stroke widths to peek CSS via custom properties — peek
 	// elements pick them up through var() in .peek-edge / .peek-node-hollow.
@@ -1607,19 +1633,22 @@ function capSizesForViewport() {
 	svg.style.setProperty('--ott-node-r',        STYLE.circleR);
 }
 
-// Compute viewBox from all positions the scene will ever visit (from + to).
-// vh is data-driven: coordinates.php places leaves at 0..100 in coord space
-// and stableYScale is cached after the first call, so vh is consistent
-// across navigations. vw is normally locked to vh × (SVG pixel aspect) so
-// the viewBox aspect matches the SVG element's aspect — that makes
-// preserveAspectRatio="xMinYMid meet" map 1:1 with no letterbox, and the
-// y-pixel scale stays constant across trees regardless of tip-label length.
-// Without this lock, longer labels would widen vw, force "meet" to
-// width-bind, and uniformly shrink the whole drawing including its
-// vertical extent (issue #2). Fallback: if the tree + labels + bracket
-// gutter genuinely don't fit in the aspect-matched width, vw expands to
-// fit so labels and brackets aren't clipped — that tree renders slightly
-// shorter, but nothing important is hidden.
+// Compute viewBox so the tree's pixel height is determined by leaf count
+// at a fixed per-row pixel budget, not by viewBox-vs-SVG aspect (which is
+// what was making height vary in #2). Invariant: every leaf gets ROW_PX
+// of vertical pixel space, so tree_h_px = (k-1) × ROW_PX.
+//
+// Strategy:
+//   1. scale = ROW_PX × (k-1) / treeYExtent — solve for the coord→pixel
+//      ratio that delivers ROW_PX per row.
+//   2. vh = svgPy / scale, vw = svgPx / scale — viewBox aspect = SVG
+//      aspect → preserveAspectRatio="meet" maps 1:1 with no letterbox.
+//   3. If tree + labels + brackets exceed vw in pixels, scale both dims
+//      up uniformly so nothing clips. Tree shrinks slightly on those
+//      navigations.
+//
+// k is currentK (chosen by idealK() from window height), so tree_h_px is
+// stable across navigations and resizes that don't cross a K_STEP boundary.
 function fitViewBox(scene) {
 	let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
 	let longest = 0;
@@ -1632,30 +1661,62 @@ function fitViewBox(scene) {
 		}
 		if (n.display.length > longest) longest = n.display.length;
 	});
-	const charW       = STYLE.labelFontSize * 0.5;
-	const labelMargin = longest * charW;
-	// Padding around the whole drawing equal to one label-line height — keeps
-	// the topmost / bottommost tip labels and annotation numbers from butting
-	// up against the SVG border.
-	const margin      = STYLE.labelFontSize;
-	// Reserve room for the bracket gutter (one column per occupied track,
-	// plus the pad between the tip labels and the first track).
-	let bracketGutter = 0;
-	if (bracketState && bracketState.trackCount > 0) {
-		bracketGutter = BRACKET_GUTTER_PAD + bracketState.trackCount * BRACKET_TRACK_W;
-	}
-	const vx = minX - margin;
-	const vy = minY - margin;
-	const vh = (maxY - minY) + margin * 2;
+	const treeXExtent = maxX - minX;
+	const treeYExtent = Math.max(maxY - minY, 1);   // guard: divide-by-zero on degenerate scenes
 
-	const elPx     = svg.clientWidth  || 1000;
-	const elPy     = svg.clientHeight || 600;
-	const elAspect = elPx / elPy;
-	const aspectVw = vh * elAspect;
-	const dataVw   = (maxX - minX) + labelMargin + bracketGutter + margin * 2;
-	const vw       = Math.max(aspectVw, dataVw);
+	// Use currentK (the window-derived budget) rather than the new tree's
+	// actual tip count so that navigating to a subtree with fewer-than-k
+	// leaves doesn't change the tree pixel height. tipsNew is reported
+	// alongside in the diagnostic.
+	const tipsNew = scene.nodes.filter(n => n.isTipNew).length;
+	const k       = Math.max(currentK | 0, 2);
+
+	const elPx = svg.clientWidth  || 1000;
+	const elPy = svg.clientHeight || 600;
+
+	const scale = ROW_PX * (k - 1) / treeYExtent;
+
+	let vh = elPy / scale;
+	let vw = elPx / scale;
+
+	// Horizontal data fit. Label and bracket widths are pixel-anchored
+	// (font is pinned to FONT_PX in capSizesForViewport), so estimate
+	// label width as (longest × FONT_PX × 0.5) pixels. Convert tree
+	// extent to pixels and check the total fits in svgPx; if not, drop
+	// the scale uniformly so nothing clips.
+	const labelMarginPx   = longest * FONT_PX * 0.5;
+	const bracketGutterPx = (bracketState && bracketState.trackCount > 0)
+		? FONT_PX + bracketState.trackCount * FONT_PX * 9
+		: 0;
+	const marginPx        = FONT_PX;
+	const treeXPx         = treeXExtent * scale;
+	const dataPxNeed      = treeXPx + labelMarginPx + bracketGutterPx + marginPx * 2;
+	let bound = 'row';
+	if (dataPxNeed > elPx) {
+		const factor = dataPxNeed / elPx;
+		vw *= factor;
+		vh *= factor;
+		bound = 'data';
+	}
+
+	const vx = minX - marginPx / scale;             // pixel pad → coord pad
+	const vy = minY - (vh - treeYExtent) / 2;       // centre tree vertically in vh
 
 	svg.setAttribute('viewBox', `${vx} ${vy} ${vw} ${vh}`);
+
+	// Diagnostic for issue #2 — quantify tree pixel height across
+	// navigations. bound='row' = row-driven (the stable case);
+	// bound='data' = labels forced expansion (shorter tree as fallback).
+	const finalScale = Math.min(elPx / vw, elPy / vh);
+	const treeHpx    = treeYExtent * finalScale;
+	const rowHpx     = treeHpx / (k - 1);
+	const fontPx     = STYLE.labelFontSize * finalScale;
+	console.log(
+		`[fit#2] k=${k} tips=${tipsNew} tree_h=${treeHpx.toFixed(0)}px ` +
+		`row=${rowHpx.toFixed(1)}px font≈${fontPx.toFixed(1)}px ` +
+		`svg=${elPx}×${elPy} win=${window.innerWidth}×${window.innerHeight} ` +
+		`vbox=${vw.toFixed(0)}×${vh.toFixed(0)} bound=${bound}`
+	);
 }
 
 function setT(t) {
