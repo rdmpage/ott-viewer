@@ -886,6 +886,13 @@ const K_STEP  = 5;
 const K_MIN   = 10;
 const K_MAX   = 80;
 
+// Visual cap on tip labels. mrca-style "speciesA + speciesB" displays
+// can run past 60 chars, which would otherwise force fitViewBox into
+// bound=data and shrink the tree. Truncated labels render with an
+// ellipsis; the full string stays in n.display for the info panel and
+// shows in the SVG <title> tooltip on desktop hover.
+const TIP_LABEL_MAX_CHARS = 32;
+
 function idealK() {
 	const elPy = (svg && svg.clientHeight) || window.innerHeight || 600;
 	// Need (k-1) rows between leaves + 2 rows of top/bottom pad → k+1 rows
@@ -1186,14 +1193,21 @@ function render(scene) {
 			//     supertree: descendant-tip count (weight)
 			// Both are drawn as hollow circles, so the count completes the
 			// "this is a stand-in for many" affordance.
-			let display = n.display;
+			let baseDisplay = n.display;
+			let suffix = '';
 			if (n.id.startsWith('other_')) {
 				const members = peekMembers(n.id);
-				if (members) display = display + ' (' + members.length + ')';
+				if (members) suffix = ' (' + members.length + ')';
 			} else if (isTip && !isSupertreeLeaf && (n.weight | 0) > 1) {
-				display = display + ' (' + (n.weight | 0) + ')';
+				suffix = ' (' + (n.weight | 0) + ')';
 			}
-			text.textContent = display;
+			text.textContent = truncateLabel(baseDisplay, TIP_LABEL_MAX_CHARS) + suffix;
+			// Native tooltip on desktop hover, full label preserved.
+			if (baseDisplay.length > TIP_LABEL_MAX_CHARS) {
+				const title = document.createElementNS(NS, 'title');
+				title.textContent = baseDisplay + suffix;
+				text.appendChild(title);
+			}
 			g.appendChild(text);
 		}
 
@@ -1280,7 +1294,8 @@ function render(scene) {
 		scene.nodes.forEach(n => {
 			if (n.toOpacity < 0.5) return;
 			if (!n.isTipNew) return;
-			const labelEnd = n.to.x + STYLE.labelDx + (n.display || '').length * charW;
+			const visibleLen = Math.min((n.display || '').length, TIP_LABEL_MAX_CHARS);
+			const labelEnd = n.to.x + STYLE.labelDx + visibleLen * charW;
 			if (labelEnd > labelEndMax) labelEndMax = labelEnd;
 		});
 		if (!isFinite(labelEndMax)) labelEndMax = 0;
@@ -1659,7 +1674,10 @@ function fitViewBox(scene) {
 			if (p.x > maxX) maxX = p.x;
 			if (p.y > maxY) maxY = p.y;
 		}
-		if (n.display.length > longest) longest = n.display.length;
+		// Clamp at the truncation cap — render() draws no more than this
+		// many chars, so dataPxNeed must be sized to the rendered width.
+		const visibleLen = Math.min(n.display.length, TIP_LABEL_MAX_CHARS);
+		if (visibleLen > longest) longest = visibleLen;
 	});
 	const treeXExtent = maxX - minX;
 	const treeYExtent = Math.max(maxY - minY, 1);   // guard: divide-by-zero on degenerate scenes
