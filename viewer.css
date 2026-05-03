@@ -96,6 +96,19 @@ svg {
 .nav-link:hover { text-decoration: underline; }
 .nav-about { margin-left: auto; }
 
+/* Inline interaction hint, deliberately understated. Sits in the nav so
+   it adds no height of its own. Hidden on narrow screens where it would
+   wrap awkwardly — touch users learn the gestures from the issue #1
+   pattern (tap to highlight, double-tap to navigate) anyway. */
+.nav-hint {
+	color: var(--text-dim);
+	font-size: 0.85em;
+	white-space: nowrap;
+}
+@media (max-width: 720px) {
+	.nav-hint { display: none; }
+}
+
 /* Featured-taxa dropdown — <details>/<summary> for native disclosure,
    absolutely-positioned panel below so it overlays the tree. The
    summary marker is suppressed so the trigger reads as a plain link

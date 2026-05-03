@@ -75,6 +75,7 @@ $k = isset($_GET['k']) ? max(2, (int)$_GET['k']) : 0;
 		<input type="text" id="search-input" placeholder="search taxon name…" autocomplete="off" spellcheck="false">
 		<ul id="search-results"></ul>
 	</div>
+	<span class="nav-hint">click a node for info &middot; double-click to focus</span>
 	<a href="#about" class="nav-link nav-about" onclick="event.preventDefault(); document.getElementById('about-dialog').showModal();">About</a>
 </nav>
 
