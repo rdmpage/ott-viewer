@@ -110,6 +110,28 @@ window.addEventListener('popstate', () => {
 	if (taxon) navigateTo(taxon, false);
 });
 
+// Re-fit the layout when the window changes size. Without this the
+// existing viewBox is uniformly scaled into the new pixel rectangle, which
+// shrinks labels and nodes whenever the window gets vertically narrow
+// (e.g. on mobile). Clearing stableYScale lets buildScene recompute the
+// y-stretch for the new aspect; capSizesForViewport then re-caps font /
+// stroke / circle sizes against the new viewBox-to-pixel ratio. Debounced
+// so a drag-resize doesn't thrash the layout.
+let resizeTimer = null;
+window.addEventListener('resize', () => {
+	if (resizeTimer) clearTimeout(resizeTimer);
+	resizeTimer = setTimeout(() => {
+		resizeTimer = null;
+		if (!t1 || !t2) return;             // no tree loaded yet
+		stableYScale = null;
+		scene = buildScene(t1, t2);
+		bracketState = computeBracketState(t2, scene);
+		fitViewBox(scene);
+		capSizesForViewport();
+		setT(currentT);
+	}, 120);
+});
+
 // Hard "jump to" — replace the displayed tree with a fresh layout for the
 // new taxon, no transition. Used by the search dropdown so picking an
 // unrelated taxon shows a fully-formed tree from t=0 instead of trying to
@@ -332,15 +354,21 @@ async function renderHoptree() {
 		return;
 	}
 
-	// Trivial case: only one entry, no history to draw — just show the
-	// name. Avoids a wasted fetch + lets the strip stay short.
+	// Trivial case: only one entry (e.g. arrived via URL, no clicks yet).
+	// Render it through buildHoptreeSvg as a one-node "tree" so the visual
+	// matches the multi-entry case — same rounded box and focal styling
+	// instead of a separate text span. Skips the network fetch since
+	// hoptree.php would just echo this back.
 	if (navigationTrail.length === 1) {
+		const e = navigationTrail[0];
+		const data = {
+			focal_id: e.id,
+			nodes:    { [e.id]: { id: e.id, display: e.display } },
+			edges:    []
+		};
 		c.classList.remove('empty');
 		c.innerHTML = '';
-		const span = document.createElement('span');
-		span.className = 'crumb-current';
-		span.textContent = navigationTrail[0].display;
-		c.appendChild(span);
+		c.appendChild(buildHoptreeSvg(data));
 		return;
 	}
 
@@ -1579,11 +1607,19 @@ function capSizesForViewport() {
 	svg.style.setProperty('--ott-node-r',        STYLE.circleR);
 }
 
-// Compute viewBox from all positions the scene will ever visit (from + to),
-// plus room for the tip labels on the right (width estimated from the
-// longest actual label, so the gutter is data-driven, not hardcoded). The
-// browser maps this viewBox onto the SVG element's pixel size via
-// preserveAspectRatio="xMinYMid meet" (no distortion, may letterbox).
+// Compute viewBox from all positions the scene will ever visit (from + to).
+// vh is data-driven: coordinates.php places leaves at 0..100 in coord space
+// and stableYScale is cached after the first call, so vh is consistent
+// across navigations. vw is normally locked to vh × (SVG pixel aspect) so
+// the viewBox aspect matches the SVG element's aspect — that makes
+// preserveAspectRatio="xMinYMid meet" map 1:1 with no letterbox, and the
+// y-pixel scale stays constant across trees regardless of tip-label length.
+// Without this lock, longer labels would widen vw, force "meet" to
+// width-bind, and uniformly shrink the whole drawing including its
+// vertical extent (issue #2). Fallback: if the tree + labels + bracket
+// gutter genuinely don't fit in the aspect-matched width, vw expands to
+// fit so labels and brackets aren't clipped — that tree renders slightly
+// shorter, but nothing important is hidden.
 function fitViewBox(scene) {
 	let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
 	let longest = 0;
@@ -1610,8 +1646,15 @@ function fitViewBox(scene) {
 	}
 	const vx = minX - margin;
 	const vy = minY - margin;
-	const vw = (maxX - minX) + labelMargin + bracketGutter + margin * 2;
 	const vh = (maxY - minY) + margin * 2;
+
+	const elPx     = svg.clientWidth  || 1000;
+	const elPy     = svg.clientHeight || 600;
+	const elAspect = elPx / elPy;
+	const aspectVw = vh * elAspect;
+	const dataVw   = (maxX - minX) + labelMargin + bracketGutter + margin * 2;
+	const vw       = Math.max(aspectVw, dataVw);
+
 	svg.setAttribute('viewBox', `${vx} ${vy} ${vw} ${vh}`);
 }
 

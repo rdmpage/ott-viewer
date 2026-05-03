@@ -35,8 +35,20 @@ $k = isset($_GET['k']) ? max(2, (int)$_GET['k']) : 30;
 		<input type="text" id="search-input" placeholder="search taxon name…" autocomplete="off" spellcheck="false">
 		<ul id="search-results"></ul>
 	</div>
-	<a href="about.php" class="nav-link nav-about">About</a>
+	<a href="#about" class="nav-link nav-about" onclick="event.preventDefault(); document.getElementById('about-dialog').showModal();">About</a>
 </nav>
+
+<!-- About dialog. Native <dialog> gives ESC-to-close and focus trapping
+     for free; the click-on-backdrop handler below is the only thing we
+     have to wire ourselves. autofocus + tabindex="-1" on the dialog
+     itself stops showModal() from auto-focusing the first link inside,
+     which Safari renders with a visible focus outline that looks like
+     a stray hover box. -->
+<dialog id="about-dialog" autofocus tabindex="-1" onclick="if(event.target===this)this.close()">
+	<span class="close" onclick="this.closest('dialog').close()" aria-hidden="true">&times;</span>
+	<p>OTT Viewer is an alternative way to view the <a href="https://tree.opentreeoflife.org/" target="_blank" rel="noopener">Open Tree of Life</a>. It uses a combination of summary trees to compress the tree, and hoptrees to navigate browsing history.</p>
+	<p>This is a project by Rod Page; source code at <a href="https://github.com/rdmpage/ott-viewer" target="_blank" rel="noopener">github.com/rdmpage/ott-viewer</a>.</p>
+</dialog>
 
 <!-- Navigation history (breadcrumb / hoptree). Collapsible via the
      native <details> element; open by default. -->

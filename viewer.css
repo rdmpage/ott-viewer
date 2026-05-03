@@ -96,6 +96,39 @@ svg {
 .nav-link:hover { text-decoration: underline; }
 .nav-about { margin-left: auto; }
 
+/* About modal — native <dialog>, deliberately understated. No border;
+   a soft shadow does the lifting. Capped at 70vw so the dialog stays
+   compact even on wide screens. Sits in the upper third of the
+   viewport (margin-top:15vh) — the standard "above optical center"
+   position so the eye lands on the content immediately. */
+#about-dialog {
+	max-width: min(32em, 70vw);
+	margin-top: 15vh;
+	margin-bottom: auto;
+	background: var(--bg-panel);
+	color: var(--text);
+	border: none;
+	border-radius: 4px;
+	padding: 1.5em 1.9em 1.4em;
+	box-shadow: 0 2px 14px var(--panel-shadow);
+	outline: none;
+}
+#about-dialog::backdrop { background: rgba(0, 0, 0, 0.25); }
+#about-dialog p { margin: 0.6em 0; line-height: 1.5; font-size: 0.95em; }
+#about-dialog p:first-of-type { margin-top: 0; }
+#about-dialog p:last-of-type  { margin-bottom: 0; }
+#about-dialog a { color: var(--text-link); }
+#about-dialog .close {
+	position: absolute;
+	top: 0.4em; right: 0.7em;
+	color: var(--text-dim);
+	cursor: pointer;
+	font-size: 1em;
+	line-height: 1;
+	user-select: none;
+}
+#about-dialog .close:hover { color: var(--text); }
+
 #search-bar {
 	flex: 0 0 auto;
 	position: relative;
@@ -223,13 +256,6 @@ svg {
 .hoptree-edge           { stroke: var(--text-dim); stroke-width: 1.2; fill: none; opacity: 0.6; }
 .hoptree-node-g         { cursor: pointer; }
 .hoptree-node-g:hover .hoptree-rect { stroke: var(--text-link); stroke-width: 2.5; }
-
-/* Single-node case (just landed, no history yet): show the name as a
-   plain crumb instead of an empty SVG. */
-#hoptree-container .crumb-current {
-	color: var(--text);
-	font-weight: 600;
-}
 
 #info-content p     { margin: 0.3em 0; }
 #info-content .key  { color: var(--text-dim); margin-right: 0.4em; }
