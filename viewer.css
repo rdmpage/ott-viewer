@@ -153,23 +153,17 @@ svg {
 	object-fit: contain;               /* preserve whole SVG; no cropping */
 	border-radius: 4px;
 	display: block;
-	background: var(--bg-elevated);    /* placeholder colour until images load */
 	border: 1px solid var(--border);
 	padding: 4px;                       /* small inset so SVG doesn't kiss the border */
 	box-sizing: border-box;
-}
-/* Phylopic silhouettes are hard-filled black, which disappears against
-   the dark theme. brightness(0) flattens any source colour to black,
-   then invert(1) flips to white — recolours the silhouette without
-   touching the SVG files. Same trick we used in bionames. The
-   placeholder background has to drop to transparent in dark mode too,
-   otherwise the filter inverts it to white and we end up with a white
-   silhouette on a white box. */
-@media (prefers-color-scheme: dark) {
-	.featured-item img {
-		filter: brightness(0) invert(1);
-		background: transparent;
-	}
+	/* Phylopic silhouettes are hard-filled black, which disappears in
+	   dark mode. brightness(0) flattens any source colour to black,
+	   invert(0.5) lands on #808080 — a mid-gray that reads against
+	   both white and dark backgrounds, so we don't need a separate
+	   dark-mode rule. No background on the img means the filter only
+	   affects the silhouette itself; the dropdown's panel bg shows
+	   through the transparent SVG areas. */
+	filter: brightness(0) invert(0.5);
 }
 .featured-item:hover {
 	background: var(--hover-bg);
