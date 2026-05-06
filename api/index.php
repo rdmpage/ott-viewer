@@ -9,6 +9,15 @@
 
 require_once dirname(__FILE__) . '/lib/response.php';
 
+// /api/ (no rewrite — direct hit on this directory) renders the
+// browser-facing reference page. /api/v1/* is the machine API and gets
+// here only via the .htaccess rewrite, which always sets _path.
+if (!isset($_GET['_path']))
+{
+	require dirname(__FILE__) . '/docs.php';
+	exit;
+}
+
 // Only GET is supported; everything is read-only.
 if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'GET')
 {

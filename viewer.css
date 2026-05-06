@@ -94,7 +94,10 @@ svg {
 	font-size: 0.95em;
 }
 .nav-link:hover { text-decoration: underline; }
-.nav-help { margin-left: auto; }
+/* First right-anchored item gets the auto margin; subsequent ones
+   flow naturally next to it. Keeping the auto on .nav-api means
+   adding more right-side links later just works. */
+.nav-api { margin-left: auto; }
 
 /* Featured-taxa dropdown — <details>/<summary> for native disclosure,
    absolutely-positioned panel below so it overlays the tree. The
