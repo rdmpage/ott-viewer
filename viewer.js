@@ -982,6 +982,23 @@ function nodeAnnotation(n) {
 	return { supported, conflicts };
 }
 
+// A node (and its incoming edge) is taxonomy-only when no study tree
+// touches it: not supported, not conflicted, not on any study path,
+// not resolving any polytomy, not appearing as a terminal. Tips that
+// only exist in OTT taxonomy without ever being sampled in a study
+// fall into this bucket — the original OTL viewer drew them with a
+// dashed line, and we mirror that here. Annotation-less nodes (older
+// data, stubs, other_ summaries) return false: we'd rather draw a
+// solid line we can't justify than a dashed line we can't justify.
+function isTaxonomyOnly(n) {
+	if (!n || !n.annotations) return false;
+	const a = n.annotations;
+	const has = list => Array.isArray(list) && list.length > 0;
+	return !(has(a.supported_by) || has(a.partial_path_of) ||
+	         has(a.resolves)     || has(a.conflicts_with)  ||
+	         has(a.terminal));
+}
+
 // Set to true to colour-code persist / exit / enter during transitions
 // (useful when debugging the animation logic). Default off so the viewer
 // renders as a single uniform tree.
@@ -1116,6 +1133,14 @@ function render(scene) {
 		path.setAttribute('stroke', kindColor(e.kind));
 		path.setAttribute('stroke-width', STYLE.edgeStrokeWidth);
 		path.setAttribute('opacity', opacity);
+		// Dashed when the child is taxonomy-only (no study touches it),
+		// matching the original OTL viewer convention. Dash and gap are
+		// scaled to edgeStrokeWidth so they read consistently regardless
+		// of viewBox scale.
+		if (isTaxonomyOnly(tgt)) {
+			const w = STYLE.edgeStrokeWidth;
+			path.setAttribute('stroke-dasharray', `${w * 3} ${w * 2}`);
+		}
 		svg.appendChild(path);
 	});
 
