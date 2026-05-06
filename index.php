@@ -75,20 +75,47 @@ $k = isset($_GET['k']) ? max(2, (int)$_GET['k']) : 0;
 		<input type="text" id="search-input" placeholder="search taxon name…" autocomplete="off" spellcheck="false">
 		<ul id="search-results"></ul>
 	</div>
-	<span class="nav-hint">click a node for info &middot; double-click to focus</span>
-	<a href="#about" class="nav-link nav-about" onclick="event.preventDefault(); document.getElementById('about-dialog').showModal();">About</a>
+	<a href="#help" class="nav-link nav-help" onclick="event.preventDefault(); document.getElementById('help-dialog').showModal();">Help</a>
 </nav>
 
-<!-- About dialog. Native <dialog> gives ESC-to-close and focus trapping
+<!-- Help dialog. Native <dialog> gives ESC-to-close and focus trapping
      for free; the click-on-backdrop handler below is the only thing we
      have to wire ourselves. autofocus + tabindex="-1" on the dialog
      itself stops showModal() from auto-focusing the first link inside,
      which Safari renders with a visible focus outline that looks like
      a stray hover box. -->
-<dialog id="about-dialog" autofocus tabindex="-1" onclick="if(event.target===this)this.close()">
+<dialog id="help-dialog" autofocus tabindex="-1" onclick="if(event.target===this)this.close()">
 	<span class="close" onclick="this.closest('dialog').close()" aria-hidden="true">&times;</span>
-	<p>OTT Viewer is an alternative way to view the <a href="https://tree.opentreeoflife.org/" target="_blank" rel="noopener">Open Tree of Life</a>. It uses a combination of summary trees to compress the tree, and hoptrees to navigate browsing history.</p>
-	<p>This is a project by Rod Page; source code at <a href="https://github.com/rdmpage/ott-viewer" target="_blank" rel="noopener">github.com/rdmpage/ott-viewer</a>.</p>
+	<p>OTT Viewer is an alternative way to view the <a href="https://tree.opentreeoflife.org/" target="_blank" rel="noopener">Open Tree of Life</a>. It uses summary trees to compress the tree and hoptrees to navigate browsing history.</p>
+	<p>Project by Rod Page; source at <a href="https://github.com/rdmpage/ott-viewer" target="_blank" rel="noopener">github.com/rdmpage/ott-viewer</a>.</p>
+
+	<h3>Navigation</h3>
+	<p>Click a node to open its info panel. Double-click to make that node the new focus and re-root the tree on it.</p>
+
+	<h3>Legend</h3>
+	<dl class="legend">
+		<dt><svg viewBox="0 0 32 16" class="legend-icon"><line x1="2" y1="8" x2="30" y2="8" stroke="currentColor" stroke-width="1.5"/></svg></dt>
+		<dd>solid edge — at least one phylogenetic study supports this clade</dd>
+
+		<dt><svg viewBox="0 0 32 16" class="legend-icon"><line x1="2" y1="8" x2="30" y2="8" stroke="currentColor" stroke-width="1.5" stroke-dasharray="4 3"/></svg></dt>
+		<dd>dashed edge — taxonomy only; no study touches this clade</dd>
+
+		<dt><svg viewBox="0 0 32 16" class="legend-icon"><circle cx="16" cy="8" r="3" fill="currentColor"/></svg></dt>
+		<dd>filled circle — internal node, or a fully-resolved tip in the supertree</dd>
+
+		<dt><svg viewBox="0 0 32 16" class="legend-icon"><polygon points="19,5 19,11 13,8" fill="currentColor"/></svg></dt>
+		<dd>triangle — tip standing in for a collapsed subtree (more descendants behind it)</dd>
+
+		<dt><svg viewBox="0 0 32 16" class="legend-icon"><circle class="legend-hollow" cx="16" cy="8" r="3"/></svg></dt>
+		<dd>open circle — &ldquo;other&rdquo; summary; sibling tips that didn't fit the leaf budget</dd>
+
+		<dt><svg viewBox="0 0 32 16" class="legend-icon">
+			<line x1="6" y1="8" x2="26" y2="8" stroke="currentColor" stroke-width="1.5"/>
+			<text x="16" y="4"  class="annot-support"  font-size="6" text-anchor="middle" dominant-baseline="middle">3</text>
+			<text x="16" y="13" class="annot-conflict" font-size="6" text-anchor="middle" dominant-baseline="middle">1</text>
+		</svg></dt>
+		<dd>numbers above (dark) and below (red) an internal-node edge: count of studies supporting and conflicting</dd>
+	</dl>
 </dialog>
 
 <!-- Navigation history (breadcrumb / hoptree). Collapsible via the

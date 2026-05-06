@@ -94,20 +94,7 @@ svg {
 	font-size: 0.95em;
 }
 .nav-link:hover { text-decoration: underline; }
-.nav-about { margin-left: auto; }
-
-/* Inline interaction hint, deliberately understated. Sits in the nav so
-   it adds no height of its own. Hidden on narrow screens where it would
-   wrap awkwardly — touch users learn the gestures from the issue #1
-   pattern (tap to highlight, double-tap to navigate) anyway. */
-.nav-hint {
-	color: var(--text-dim);
-	font-size: 0.85em;
-	white-space: nowrap;
-}
-@media (max-width: 720px) {
-	.nav-hint { display: none; }
-}
+.nav-help { margin-left: auto; }
 
 /* Featured-taxa dropdown — <details>/<summary> for native disclosure,
    absolutely-positioned panel below so it overlays the tree. The
@@ -174,14 +161,14 @@ svg {
 }
 .featured-item span { margin-top: 0.35em; }
 
-/* About modal — native <dialog>, deliberately understated. No border;
+/* Help modal — native <dialog>, deliberately understated. No border;
    a soft shadow does the lifting. Capped at 70vw so the dialog stays
    compact even on wide screens. Sits in the upper third of the
    viewport (margin-top:15vh) — the standard "above optical center"
    position so the eye lands on the content immediately. */
-#about-dialog {
-	max-width: min(32em, 70vw);
-	margin-top: 15vh;
+#help-dialog {
+	max-width: min(34em, 80vw);
+	margin-top: 12vh;
 	margin-bottom: auto;
 	background: var(--bg-panel);
 	color: var(--text);
@@ -191,12 +178,19 @@ svg {
 	box-shadow: 0 2px 14px var(--panel-shadow);
 	outline: none;
 }
-#about-dialog::backdrop { background: rgba(0, 0, 0, 0.25); }
-#about-dialog p { margin: 0.6em 0; line-height: 1.5; font-size: 0.95em; }
-#about-dialog p:first-of-type { margin-top: 0; }
-#about-dialog p:last-of-type  { margin-bottom: 0; }
-#about-dialog a { color: var(--text-link); }
-#about-dialog .close {
+#help-dialog::backdrop { background: rgba(0, 0, 0, 0.25); }
+#help-dialog p { margin: 0.6em 0; line-height: 1.5; font-size: 0.95em; }
+#help-dialog p:first-of-type { margin-top: 0; }
+#help-dialog h3 {
+	margin: 1.1em 0 0.4em;
+	font-size: 0.95em;
+	font-weight: 600;
+	color: var(--text-dim);
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+}
+#help-dialog a { color: var(--text-link); }
+#help-dialog .close {
 	position: absolute;
 	top: 0.4em; right: 0.7em;
 	color: var(--text-dim);
@@ -205,7 +199,34 @@ svg {
 	line-height: 1;
 	user-select: none;
 }
-#about-dialog .close:hover { color: var(--text); }
+#help-dialog .close:hover { color: var(--text); }
+
+/* Legend: 2-column grid. Left column is the icon (32×16 viewBox SVG),
+   right column is the description. Icons inherit currentColor so they
+   match the surrounding text in any theme. */
+.legend {
+	display: grid;
+	grid-template-columns: 36px 1fr;
+	gap: 0.5em 0.8em;
+	margin: 0.4em 0 0;
+	align-items: center;
+	font-size: 0.9em;
+}
+.legend dt { margin: 0; }
+.legend dd { margin: 0; line-height: 1.35; }
+.legend-icon {
+	width: 32px;
+	height: 16px;
+	display: block;
+	color: var(--text);
+	overflow: visible;
+	border: none;                 /* override global svg { border: ... } */
+}
+.legend-hollow {
+	fill: var(--bg);
+	stroke: currentColor;
+	stroke-width: 1;
+}
 
 #search-bar {
 	flex: 0 0 auto;
