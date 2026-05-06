@@ -1539,13 +1539,19 @@ function renderPeek() {
 		const yTarget  = topTarget + row * rowH;
 		const y        = lerp(anchor.current.y, yTarget);
 
-		// Branch.
+		// Branch. Dashed when the member is taxonomy-only, mirroring the
+		// main-tree edge convention (members carry full annotations so
+		// isTaxonomyOnly applies directly).
 		const branch = document.createElementNS(NS, 'line');
 		branch.setAttribute('class', 'peek-edge');
 		branch.setAttribute('x1', trunkX);
 		branch.setAttribute('y1', y);
 		branch.setAttribute('x2', trunkX + branchDx);
 		branch.setAttribute('y2', y);
+		if (isTaxonomyOnly(m)) {
+			const w = STYLE.edgeStrokeWidth;
+			branch.setAttribute('stroke-dasharray', `${w * 3} ${w * 2}`);
+		}
 		g.appendChild(branch);
 
 		// Tip circle.
