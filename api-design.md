@@ -171,6 +171,186 @@ MRCA of a set of nodes. Wraps `TreeQueries::mrca`.
 }
 ```
 
+### `GET /api/v1/nodes/{id}/descendants`
+
+All descendants of a node, flat. Useful for callers that already
+hold a node id and want the membership of its clade without
+re-fetching the whole `tree`. PhyQL/Nakhleh primitive.
+
+| Param        | Type   | Default | Notes |
+|--------------|--------|---------|-------|
+| `tips_only`  | bool   | `false` | If true, return only leaves of the OTT supertree. |
+| `limit`      | int    | 500     | Cap 5000. |
+| `offset`     | int    | 0       | |
+
+```json
+{
+  "id":     "ott917716",
+  "total":  18,
+  "offset": 0,
+  "limit":  500,
+  "descendants": [
+    { "id": "ott665631", "display": "Goniurosaurus lichtenfelderi" }
+  ]
+}
+```
+
+### `GET /api/v1/path`
+
+Topological path between two nodes (parent-of relationships only),
+plus their LCA. Composes `mrca` with two ancestor walks. PhyQL
+primitive.
+
+| Param  | Type   | Notes |
+|--------|--------|-------|
+| `from` | string | required |
+| `to`   | string | required |
+
+```json
+{
+  "from":        "ott665631",
+  "to":          "ott917717",
+  "lca":         { "id": "ott917716", "display": "Goniurosaurus" },
+  "length":      2,
+  "via":         ["ott665631", "ott917716", "ott917717"]
+}
+```
+
+`length` counts edges; `via` is the ordered node id list from `from`
+up to LCA and back down to `to`.
+
+## Analysis endpoints
+
+The endpoints above expose the *data*. The endpoints under
+`/api/v1/analysis/` answer *questions* over a focal subtree
+(scoped to `taxon` + `k`, identical to `/api/v1/tree`). They're
+the surface the MCP "talk to the tree" tools will sit on top of —
+each is a pure function of the focal subtree and its annotations.
+
+All analysis endpoints accept `taxon` (required) and `k` (default 30).
+
+### `GET /api/v1/analysis/summary`
+
+Tree-level statistics. The headline numbers a "what's this tree
+look like?" question wants.
+
+```json
+{
+  "taxon":                  "ott93302",
+  "k":                      30,
+  "node_count":             56,
+  "tip_count":              30,
+  "internal_count":         25,
+  "polytomy_count":         3,
+  "taxonomy_only_tip_count":     0,
+  "taxonomy_only_internal_count": 0,
+  "support_histogram":      { "0": 0, "1": 2, "2": 4, "3": 18, "4": 1 },
+  "edges_with_conflict":    5,
+  "longest_label":          66
+}
+```
+
+### `GET /api/v1/analysis/non-monophyletic`
+
+Taxa (by name prefix) appearing in non-sister positions.
+Surfaces the most common "is anything wrong with this tree?" finding.
+
+| Param   | Type   | Default | Notes |
+|---------|--------|---------|-------|
+| `level` | enum   | `genus` | `genus`, `family`, or `any` (any prefix > once). |
+| `min_occurrences` | int | 2 | Lower bound on tips sharing the prefix. |
+
+```json
+{
+  "taxon": "mrcaott1662ott7069534",
+  "level": "genus",
+  "non_monophyletic": [
+    {
+      "name": "Goniurosaurus",
+      "tip_count": 16,
+      "tips": [
+        { "id": "ott665631", "display": "Goniurosaurus lichtenfelderi" }
+      ],
+      "lca": { "id": "ott917716", "display": "Goniurosaurus" },
+      "lca_descendant_tip_count": 18,
+      "intruders": [
+        { "id": "ott...", "display": "Hemitheconyx ..." }
+      ]
+    }
+  ]
+}
+```
+
+`intruders` are descendants of the LCA that don't share the name —
+the evidence for non-monophyly.
+
+### `GET /api/v1/analysis/weak-support`
+
+Edges below a support threshold. Drives "which clades are weakly
+supported?" workflows.
+
+| Param         | Type | Default | Notes |
+|---------------|------|---------|-------|
+| `min_studies` | int  | 2       | Edges with strictly fewer supporting studies are returned. |
+| `include_taxonomy_only` | bool | `false` | Whether to include edges with zero study touches at all. (They're a separate category — `/analysis/taxonomy-only` handles them.) |
+
+```json
+{
+  "threshold": 2,
+  "weak": [
+    {
+      "node_id": "ott...",
+      "display": "...",
+      "supporting_studies": 1,
+      "conflicting_studies": 0,
+      "study_ids": ["pg_2460@tree5285"]
+    }
+  ]
+}
+```
+
+### `GET /api/v1/analysis/taxonomy-only`
+
+Edges that exist purely from OTT taxonomy — no study touches them.
+The same set the viewer renders dashed.
+
+```json
+{
+  "tip_count":              30,
+  "taxonomy_only_tip_count": 13,
+  "taxonomy_only_fraction": 0.43,
+  "tips": [
+    { "id": "ott4122513", "display": "Goniurosaurus yingdeensis" }
+  ],
+  "internal_clades": [
+    { "id": "ott...", "display": "...", "tip_count": 4 }
+  ]
+}
+```
+
+`internal_clades` are entire dashed subtrees (their root and all
+descendants are taxonomy-only). Empty in most trees.
+
+### `GET /api/v1/analysis/polytomies`
+
+Internal nodes with three or more children in the displayed tree.
+Indicates unresolved relationships.
+
+```json
+{
+  "polytomies": [
+    {
+      "node_id": "ott917716",
+      "display": "Goniurosaurus",
+      "child_count": 14,
+      "children": [
+        { "id": "ott665631", "display": "Goniurosaurus lichtenfelderi" }
+      ]
+    }
+  ]
+}
+```
+
 ### `GET /api/v1/search`
 
 Taxon search. Replaces `search.php`.
@@ -242,16 +422,26 @@ read-only static dataset.
 Single front controller, file-per-handler:
 
 ```
-/api/index.php             ← router (parses path, dispatches)
+/api/index.php                 ← router (parses path, dispatches)
 /api/handlers/tree.php
 /api/handlers/hoptree.php
-/api/handlers/nodes.php
+/api/handlers/nodes.php        ← /nodes/{id}, /nodes/{id}/children, /descendants
 /api/handlers/mrca.php
+/api/handlers/path.php
 /api/handlers/search.php
 /api/handlers/about.php
-/api/lib/response.php      ← json_send(), error(), cache_headers()
-/api/lib/format.php        ← newick_emit() and any future format helpers
+/api/handlers/analysis.php     ← /analysis/* — dispatches the question subcommand
+/api/lib/response.php          ← json_send(), error(), cache_headers()
+/api/lib/format.php            ← newick_emit() and any future format helpers
+/api/lib/analysis.php          ← pure functions over a focal subtree:
+                                  monophyly, weak-support, taxonomy-only, …
 ```
+
+The analysis lib is intentionally framework-free PHP functions that
+take a parsed focal subtree (the same JSON `/api/v1/tree` returns) and
+return the analysis result. That keeps the questions testable in
+isolation and reusable from any future caller (CLI, MCP server,
+batch jobs).
 
 `.htaccess` rewrite:
 
@@ -366,43 +556,72 @@ of silently.
 Rough breakdown — assumes the existing `OttTree` / `SummaryTree` /
 `TreeQueries` layer doesn't need re-architecting (it doesn't).
 
-| Slice                                          | Effort       |
-|------------------------------------------------|--------------|
-| Router + response/error helpers + `.htaccess`  | 2 h          |
-| `/api/v1/about`                                | 30 min       |
-| `/api/v1/tree` (port `tree.php` + Newick)      | 3 h          |
-| `/api/v1/hoptree` (port `hoptree.php` + Newick)| 2 h          |
-| `/api/v1/nodes/{id}` + `/children`             | 4 h          |
-| `/api/v1/mrca`                                 | 1 h          |
-| `/api/v1/search` (port + add prefix mode)      | 2 h          |
-| Newick emitter (shared)                        | 1 h          |
-| Migrate `viewer.js` to new URLs                | 1 h          |
-| Old endpoints → shims that call handlers       | 1 h          |
-| **Tests** — schema (per endpoint)              | 4 h          |
-| **Tests** — behavioural (per endpoint)         | 4 h          |
-| **Tests** — error envelope                     | 2 h          |
-| **Tests** — cross-endpoint invariants + Newick | 3 h          |
-| **Tests** — runner + HTTP-mode scaffolding     | 2 h          |
-| `api-reference.md` for consumers + examples    | 3 h          |
-| Optional: OpenAPI spec (`openapi.yaml`)        | 4 h          |
-| **Subtotal (no OpenAPI)**                      | **~4 days**  |
-| **With OpenAPI spec**                          | **~4.5 days**|
+| Slice                                          | Effort       | Phase |
+|------------------------------------------------|--------------|-------|
+| Router + response/error helpers + `.htaccess`  | 2 h          | 1     |
+| `/api/v1/about`                                | 30 min       | 1     |
+| `/api/v1/tree` (port `tree.php` + Newick)      | 3 h          | 1     |
+| `/api/v1/nodes/{id}` + `/children`             | 4 h          | 1     |
+| `/api/v1/hoptree` (port `hoptree.php` + Newick)| 2 h          | 2     |
+| `/api/v1/mrca`                                 | 1 h          | 2     |
+| `/api/v1/path` + `/nodes/{id}/descendants`     | 2 h          | 2     |
+| `/api/v1/search` (port + add prefix mode)      | 2 h          | 2     |
+| Newick emitter (shared)                        | 1 h          | 1–2   |
+| Migrate `viewer.js` to new URLs                | 1 h          | 2     |
+| Old endpoints → shims that call handlers       | 1 h          | 2     |
+| `/api/v1/analysis/summary`                     | 2 h          | 3     |
+| `/api/v1/analysis/non-monophyletic`            | 3 h          | 3     |
+| `/api/v1/analysis/weak-support`                | 1 h          | 3     |
+| `/api/v1/analysis/taxonomy-only`               | 1 h          | 3     |
+| `/api/v1/analysis/polytomies`                  | 1 h          | 3     |
+| `analysis.php` lib + unit tests                | 3 h          | 3     |
+| MCP server wrapping the analysis endpoints     | 4 h          | 4     |
+| **Tests** — schema (per endpoint)              | 4 h          | 1–3   |
+| **Tests** — behavioural (per endpoint)         | 4 h          | 1–3   |
+| **Tests** — error envelope                     | 2 h          | 2     |
+| **Tests** — cross-endpoint invariants + Newick | 3 h          | 2     |
+| **Tests** — runner + HTTP-mode scaffolding     | 2 h          | 1     |
+| `api-reference.md` for consumers + examples    | 3 h          | 2–3   |
+| Optional: OpenAPI spec (`openapi.yaml`)        | 4 h          | post  |
+| **Phase 1 (foundation)**                       | **~1 day**   |       |
+| **Phase 2 (data layer complete)**              | **~1 day**   |       |
+| **Phase 3 (analysis endpoints)**               | **~1 day**   |       |
+| **Phase 4 (MCP wrapper)**                      | **~½ day**   |       |
+| **Total without OpenAPI**                      | **~4 days**  |       |
 
-The test slice is now ~15h on its own (~2 days), which feels honest
+The test slice is ~15h on its own (~2 days), which feels honest
 for an API meant to be consumed by third parties. If we cut corners,
 schema + behavioural tests are the keepers; error envelope and
 cross-endpoint invariants can defer.
 
 Splittable as:
-- **Day 1.** Router + tree + hoptree + search. Schema tests for each
-  as you go. Viewer keeps working through the shims; nothing
-  user-visible breaks.
-- **Day 2.** New endpoints: `/nodes/{id}`, `/children`, `/mrca`,
-  `/about`. Newick emitter. Schema + behavioural tests for the new
-  endpoints. Viewer migrated to new URLs.
-- **Day 3.** Error envelope, cross-endpoint invariants, Newick
-  parser check. HTTP integration mode.
-- **Day 4.** `api-reference.md`, cleanup, optional OpenAPI.
+
+**Phase 1 — Foundation.** Router + response/error helpers + `.htaccess`.
+Endpoints: `/about`, `/tree`, `/nodes/{id}` + `/children`. Newick emitter.
+Schema tests for each (extending `tests/trees.php` pattern). Viewer
+still using legacy `tree.php`. No user-visible change yet.
+
+**Phase 2 — Data layer complete.** Remaining data endpoints:
+`/hoptree`, `/mrca`, `/path`, `/nodes/{id}/descendants`, `/search`.
+Behavioural + error-envelope tests, cross-endpoint invariants, Newick
+parser check. Migrate `viewer.js` to new URLs and convert legacy
+`*.php` files to thin shims. **End of Phase 2 is the natural
+"viewer running entirely from the API" stopping point.**
+
+**Phase 3 — Analysis layer.** `/analysis/*` endpoints, the `analysis`
+lib, and a small set of fixtures expressing known biological cases
+(non-monophyletic *Goniurosaurus*, *Goniurosaurus* polytomy,
+taxonomy-only-heavy clades). Tests assert specific findings, not just
+shape — these are the "talk to the tree" answers, so they need to be
+right.
+
+**Phase 4 — MCP wrapper.** Standalone Node or Python process exposing
+the analysis endpoints as MCP tools. Independent of the viewer;
+usable from Claude Desktop, Claude Code, or any MCP client. Pure
+plumbing once Phase 3 is solid.
+
+**Post-launch.** `api-reference.md`, optional OpenAPI spec, retire the
+shim files after one release.
 
 Risks / unknowns:
 

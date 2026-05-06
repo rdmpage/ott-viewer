@@ -1,0 +1,5 @@
+# /api/v1/<rest> → /api/index.php?_path=<rest>. Keeps the public URL
+# stable while the front controller in api/index.php does the dispatch.
+# QSA preserves any other query parameters (taxon, k, format, ...).
+RewriteEngine On
+RewriteRule ^api/v1/?(.*)$ api/index.php?_path=$1 [QSA,L]
