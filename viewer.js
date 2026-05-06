@@ -12,7 +12,9 @@ let t1 = null, t2 = null;
 let currentTree = null;
 let currentK    = 30;
 
-const TREE_API = 'tree.php';
+const TREE_API     = 'api/v1/tree';
+const HOPTREE_API  = 'api/v1/hoptree';
+const SEARCH_API   = 'api/v1/search';
 
 // Counter so concurrent calls (shouldn't happen, but defensive) don't drop
 // the loading state prematurely.
@@ -41,8 +43,8 @@ async function fetchTree(taxon, k) {
 // Demo bootstrap (transition.html): load two specific trees.
 async function loadTrees() {
 	const [r1, r2] = await Promise.all([
-		fetch('tree.php?taxon=ott452461&k=30'),
-		fetch('tree.php?taxon=mrcaott18206ott18209&k=30'),
+		fetch(TREE_API + '?taxon=ott452461&k=30'),
+		fetch(TREE_API + '?taxon=mrcaott18206ott18209&k=30'),
 	]);
 	t1 = await r1.json();
 	t2 = await r2.json();
@@ -258,8 +260,13 @@ function setupSearch() {
 
 		let hits;
 		try {
-			const r = await fetch('search.php?q=' + encodeURIComponent(q));
-			hits = await r.json();
+			const r = await fetch(SEARCH_API + '?q=' + encodeURIComponent(q));
+			const body = await r.json();
+			// API v1 wraps results in { query, mode, results }; the old
+			// search.php returned a bare array. Normalise to an array of
+			// { id, display } so the rest of this function doesn't care.
+			hits = Array.isArray(body) ? body.map(h => ({ id: h.external_id, display: h.label }))
+			                           : (body.results || []);
 		} catch (e) {
 			console.error('search failed', e);
 			return;
@@ -267,7 +274,7 @@ function setupSearch() {
 		if (q !== input.value.trim()) return;   // user kept typing — drop stale
 
 		results.innerHTML = '';
-		if (!Array.isArray(hits) || hits.length === 0) {
+		if (hits.length === 0) {
 			const li = document.createElement('li');
 			li.className = 'empty';
 			li.textContent = 'no exact match for "' + q + '"';
@@ -277,10 +284,10 @@ function setupSearch() {
 				const li  = document.createElement('li');
 				const lab = document.createElement('span');
 				lab.className   = 'label-text';
-				lab.textContent = h.label;
+				lab.textContent = h.display;
 				const ext = document.createElement('span');
 				ext.className   = 'ext-id';
-				ext.textContent = h.external_id;
+				ext.textContent = h.id;
 				li.appendChild(lab);
 				li.appendChild(ext);
 				li.addEventListener('click', () => pickResult(h));
@@ -292,12 +299,12 @@ function setupSearch() {
 
 	function pickResult(h) {
 		results.classList.remove('open');
-		input.value = h.label;
-		lastQuery = h.label;
+		input.value = h.display;
+		lastQuery = h.display;
 		// Use replaceTree (not navigateTo) so the search jump is a clean
 		// reset to the fully-formed new tree rather than a transition
 		// between two potentially-unrelated layouts.
-		replaceTree(h.external_id);
+		replaceTree(h.id);
 	}
 
 	input.addEventListener('input', doSearch);
@@ -399,7 +406,7 @@ async function renderHoptree() {
 	const ids = navigationTrail.map(e => e.id).join(',');
 	let data;
 	try {
-		const r = await fetch('hoptree.php?ids=' + encodeURIComponent(ids));
+		const r = await fetch(HOPTREE_API + '?ids=' + encodeURIComponent(ids));
 		data = await r.json();
 	} catch (e) {
 		console.error('hoptree fetch failed', e);

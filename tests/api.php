@@ -28,6 +28,16 @@ $cases = array(
 	array('name' => 'nodes:unknown-id-404',               'fn' => 'case_nodes_unknown'),
 	array('name' => 'nodes:children-paginated',           'fn' => 'case_nodes_children'),
 	array('name' => 'router:unknown-resource-404',        'fn' => 'case_router_unknown'),
+	array('name' => 'hoptree:two-ids',                    'fn' => 'case_hoptree_two_ids'),
+	array('name' => 'hoptree:empty-ids',                  'fn' => 'case_hoptree_empty'),
+	array('name' => 'mrca:pair',                          'fn' => 'case_mrca_pair'),
+	array('name' => 'mrca:single-id-rejected',            'fn' => 'case_mrca_single'),
+	array('name' => 'path:two-nodes',                     'fn' => 'case_path_two_nodes'),
+	array('name' => 'search:exact',                       'fn' => 'case_search_exact'),
+	array('name' => 'search:prefix',                      'fn' => 'case_search_prefix'),
+	array('name' => 'search:bad-mode',                    'fn' => 'case_search_bad_mode'),
+	array('name' => 'nodes:descendants-tips-only',        'fn' => 'case_nodes_descendants'),
+	array('name' => 'invariant:tree-nodes-resolve-on-/nodes', 'fn' => 'case_invariant_tree_nodes_resolve'),
 );
 
 $failures = 0;
@@ -280,5 +290,195 @@ function case_router_unknown($base)
 	{
 		$err[] = "expected error.code='not_found'";
 	}
+	return $err;
+}
+
+function case_hoptree_two_ids($base)
+{
+	list($s, $_ct, $body) = http_get("$base/hoptree?ids=ott93302,ott304358");
+	$err = array();
+	if ($s !== 200) $err[] = "expected 200, got $s";
+	$d = decode_json($body);
+	if ($d === null) { $err[] = 'response not valid JSON'; return $err; }
+	if (!isset($d->nodes->ott93302))   $err[] = "missing visited node ott93302";
+	if (!isset($d->nodes->ott304358))  $err[] = "missing visited node ott304358";
+	if (isset($d->nodes->ott93302) && empty($d->nodes->ott93302->visited))
+	{
+		$err[] = "ott93302 should have visited=true";
+	}
+	if (isset($d->focal_id) && $d->focal_id !== 'ott304358')
+	{
+		$err[] = "expected focal_id=ott304358 (last visited), got '" . ($d->focal_id ?? '<missing>') . "'";
+	}
+	return $err;
+}
+
+function case_hoptree_empty($base)
+{
+	list($s, $_ct, $body) = http_get("$base/hoptree?ids=");
+	$err = array();
+	if ($s !== 200) $err[] = "expected 200, got $s";
+	$d = decode_json($body);
+	if (!isset($d->edges) || !is_array($d->edges) || count($d->edges) !== 0)
+	{
+		$err[] = "expected empty edges[] for ids=''";
+	}
+	return $err;
+}
+
+function case_mrca_pair($base)
+{
+	list($s, $_ct, $body) = http_get("$base/mrca?ids=ott917716,ott342539");
+	$err = array();
+	if ($s !== 200) $err[] = "expected 200, got $s";
+	$d = decode_json($body);
+	if ($d === null) { $err[] = 'response not valid JSON'; return $err; }
+	if (!isset($d->mrca->id))                  $err[] = "missing mrca.id";
+	if (!isset($d->inputs) || count($d->inputs) !== 2) $err[] = "inputs should have 2 entries";
+	if (isset($d->mrca->id) && strpos($d->mrca->id, 'mrca') !== 0
+		&& strpos($d->mrca->id, 'ott') !== 0)
+	{
+		$err[] = "mrca.id should be an ott or mrca id, got '$d->mrca->id'";
+	}
+	return $err;
+}
+
+function case_mrca_single($base)
+{
+	list($s, $_ct, $body) = http_get("$base/mrca?ids=ott93302");
+	$err = array();
+	if ($s !== 400) $err[] = "expected 400 for single id, got $s";
+	$d = decode_json($body);
+	if (!isset($d->error->code) || $d->error->code !== 'bad_request')
+	{
+		$err[] = "expected error.code='bad_request'";
+	}
+	return $err;
+}
+
+function case_path_two_nodes($base)
+{
+	list($s, $_ct, $body) = http_get("$base/path?from=ott917716&to=ott342539");
+	$err = array();
+	if ($s !== 200) $err[] = "expected 200, got $s";
+	$d = decode_json($body);
+	if ($d === null) { $err[] = 'response not valid JSON'; return $err; }
+	foreach (array('from', 'to', 'lca', 'length', 'via') as $f)
+	{
+		if (!isset($d->$f)) $err[] = "missing field '$f'";
+	}
+	if (isset($d->via))
+	{
+		if (count($d->via) === 0)        $err[] = "via must be non-empty";
+		if ($d->via[0] !== 'ott917716')  $err[] = "via must start with from id";
+		$last = $d->via[count($d->via) - 1];
+		if ($last !== 'ott342539')       $err[] = "via must end with to id";
+	}
+	if (isset($d->length, $d->via) && $d->length !== count($d->via) - 1)
+	{
+		$err[] = "length ($d->length) doesn't match via length - 1 (" . (count($d->via) - 1) . ")";
+	}
+	return $err;
+}
+
+function case_search_exact($base)
+{
+	list($s, $_ct, $body) = http_get("$base/search?q=Eukaryota");
+	$err = array();
+	if ($s !== 200) $err[] = "expected 200, got $s";
+	$d = decode_json($body);
+	if ($d === null) { $err[] = 'response not valid JSON'; return $err; }
+	foreach (array('query', 'mode', 'results') as $f)
+	{
+		if (!property_exists($d, $f)) $err[] = "missing field '$f'";
+	}
+	if (isset($d->results) && count($d->results) === 0)
+	{
+		$err[] = "expected at least one result for 'Eukaryota'";
+	}
+	if (isset($d->results) && count($d->results) > 0)
+	{
+		$r0 = $d->results[0];
+		if (!isset($r0->id) || !isset($r0->display))
+		{
+			$err[] = "result missing id/display";
+		}
+	}
+	return $err;
+}
+
+function case_search_prefix($base)
+{
+	list($s, $_ct, $body) = http_get("$base/search?q=Goniurosaurus&mode=prefix&limit=5");
+	$err = array();
+	if ($s !== 200) $err[] = "expected 200, got $s";
+	$d = decode_json($body);
+	if ($d === null) { $err[] = 'response not valid JSON'; return $err; }
+	if (isset($d->results) && count($d->results) === 0)
+	{
+		$err[] = "expected results for prefix 'Goniurosaurus'";
+	}
+	if (isset($d->results) && count($d->results) > 5)
+	{
+		$err[] = "limit=5 not enforced (got " . count($d->results) . ")";
+	}
+	return $err;
+}
+
+function case_search_bad_mode($base)
+{
+	list($s, $_ct, $body) = http_get("$base/search?q=Anything&mode=fuzzy");
+	$err = array();
+	if ($s !== 400) $err[] = "expected 400 for unknown mode, got $s";
+	$d = decode_json($body);
+	if (!isset($d->error->code) || $d->error->code !== 'bad_request')
+	{
+		$err[] = "expected error.code='bad_request'";
+	}
+	return $err;
+}
+
+function case_nodes_descendants($base)
+{
+	list($s, $_ct, $body) = http_get("$base/nodes/ott917716/descendants?tips_only=true&limit=5");
+	$err = array();
+	if ($s !== 200) $err[] = "expected 200, got $s";
+	$d = decode_json($body);
+	if ($d === null) { $err[] = 'response not valid JSON'; return $err; }
+	foreach (array('id','total','offset','limit','tips_only','descendants') as $f)
+	{
+		if (!property_exists($d, $f)) $err[] = "missing field '$f'";
+	}
+	if (isset($d->descendants) && count($d->descendants) > 5)
+	{
+		$err[] = "limit=5 not enforced";
+	}
+	if (isset($d->tips_only) && $d->tips_only !== true)
+	{
+		$err[] = "tips_only echo should be true";
+	}
+	return $err;
+}
+
+// Cross-endpoint invariant: every node id /tree returns must resolve on
+// /nodes/{id} (filtering synthetic other_ / stub ids that are
+// computed-only and don't have their own /nodes/{id} entry).
+function case_invariant_tree_nodes_resolve($base)
+{
+	list($_s, $_ct, $body) = http_get("$base/tree?taxon=mrcaott78156ott91459&k=8");
+	$d = decode_json($body);
+	if ($d === null || !isset($d->nodes)) return array('tree response unusable');
+	$err = array();
+	$checked = 0;
+	foreach ($d->nodes as $id => $n)
+	{
+		if (strpos($id, 'other_') === 0)            continue;   // synthetic
+		if (isset($n->type) && $n->type === 'stub') continue;   // upstream marker
+		if ($checked >= 4) break;                                // sample, don't hammer
+		list($status) = http_get("$base/nodes/$id");
+		if ($status !== 200) $err[] = "/nodes/$id from /tree did not resolve (HTTP $status)";
+		$checked++;
+	}
+	if ($checked === 0) $err[] = "no nodes were sampled — tree response was empty?";
 	return $err;
 }

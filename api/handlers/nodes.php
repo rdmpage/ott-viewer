@@ -108,6 +108,69 @@ function api_handle_node_children(PDO $db, $external_id, array $params)
 	api_json($out);
 }
 
+function api_handle_node_descendants(PDO $db, $external_id, array $params)
+{
+	api_validate_external_id($external_id, 'id');
+
+	$tips_only = isset($params['tips_only']) && in_array(
+		strtolower((string)$params['tips_only']),
+		array('1', 'true', 'yes'), true
+	);
+	$offset = isset($params['offset']) ? max(0, (int)$params['offset']) : 0;
+	$limit  = isset($params['limit'])  ? max(1, (int)$params['limit'])  : 500;
+	if ($limit > 5000) $limit = 5000;
+
+	// nleft / nright contains-check: descendants are those with bounds
+	// strictly inside the focal node's bounds. Tips have nright = nleft + 1.
+	$row_stmt = $db->prepare(
+		'SELECT t.nleft, t.nright FROM tree t INNER JOIN taxa ta USING(id) WHERE ta.external_id = ?'
+	);
+	$row_stmt->execute(array($external_id));
+	$bounds = $row_stmt->fetch(PDO::FETCH_ASSOC);
+	if (!$bounds)
+	{
+		api_error('node_not_found', "No node with external_id '$external_id'.",
+			array('id' => $external_id), 404);
+	}
+
+	$nleft  = (int)$bounds['nleft'];
+	$nright = (int)$bounds['nright'];
+
+	$tip_clause = $tips_only ? ' AND t.nright = t.nleft + 1' : '';
+	$count_sql  = "SELECT COUNT(*) FROM tree t
+	               WHERE t.nleft > :nleft AND t.nright < :nright" . $tip_clause;
+	$total_stmt = $db->prepare($count_sql);
+	$total_stmt->execute(array(':nleft' => $nleft, ':nright' => $nright));
+	$total = (int)$total_stmt->fetchColumn();
+
+	$rows_sql = "SELECT ta.external_id, ta.label, CAST(t.weight AS INTEGER) AS weight
+	             FROM tree t INNER JOIN taxa ta USING(id)
+	             WHERE t.nleft > :nleft AND t.nright < :nright" . $tip_clause . "
+	             ORDER BY t.nleft
+	             LIMIT $limit OFFSET $offset";
+	$rows_stmt = $db->prepare($rows_sql);
+	$rows_stmt->execute(array(':nleft' => $nleft, ':nright' => $nright));
+	$rows = $rows_stmt->fetchAll(PDO::FETCH_ASSOC);
+
+	$out = new stdClass;
+	$out->id          = $external_id;
+	$out->total       = $total;
+	$out->offset      = $offset;
+	$out->limit       = $limit;
+	$out->tips_only   = $tips_only;
+	$out->descendants = array();
+	foreach ($rows as $r)
+	{
+		$row = new stdClass;
+		$row->id      = $r['external_id'];
+		$row->display = $r['label'];
+		$row->weight  = (int)$r['weight'];
+		$out->descendants[] = $row;
+	}
+
+	api_json($out);
+}
+
 function _node_parent_chain(OttTree $ott, $node)
 {
 	$chain = array();

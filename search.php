@@ -1,20 +1,21 @@
 <?php
 
-// Simple taxon search endpoint.
-//
-// GET search.php?q=<name>  →  JSON array of { external_id, label } rows
-// matching `q` exactly (case-insensitive). At most 50 hits.
-//
-// Multiple matches are possible (homonyms across kingdoms — "Drosophila"
-// is both a fly genus and a plant genus, etc.), so the client shows all
-// hits in a dropdown and lets the user pick.
-//
-// Future: switch to prefix / substring matching, paginate, rank by
-// descendant count.
+// Legacy entry point. Real implementation at /api/v1/search.
+// Note: the new endpoint wraps results in { query, mode, results }; the
+// shim returns the legacy bare array shape so old consumers don't break.
 
-header('Content-Type: application/json');
+require_once dirname(__FILE__) . '/api/handlers/search.php';
+require_once dirname(__FILE__) . '/api/lib/response.php';
 
+$db = new PDO('sqlite:' . dirname(__FILE__) . '/ott.db');
+$db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+
+// Inline the search query so we can return the legacy shape (bare array
+// of { external_id, label }). The /api/v1/search wrapper reformats and
+// also adds query/mode/limit envelope; this shim matches the old output.
 $q = isset($_GET['q']) ? trim($_GET['q']) : '';
+header('Content-Type: application/json');
+header('Access-Control-Allow-Origin: *');
 
 if ($q === '')
 {
@@ -22,16 +23,12 @@ if ($q === '')
 	return;
 }
 
-$db   = new PDO('sqlite:' . dirname(__FILE__) . '/ott.db');
 $stmt = $db->prepare(
 	'SELECT external_id, label FROM taxa
-	WHERE label = :q COLLATE NOCASE
-	ORDER BY label
-	LIMIT 50'
+	 WHERE label = :q COLLATE NOCASE
+	 ORDER BY label
+	 LIMIT 50'
 );
 $stmt->execute(array(':q' => $q));
-
-$rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-echo json_encode($rows, JSON_UNESCAPED_UNICODE);
+echo json_encode($stmt->fetchAll(PDO::FETCH_ASSOC), JSON_UNESCAPED_UNICODE);
 ?>

@@ -52,14 +52,35 @@ try
 			{
 				api_error('bad_request', "Missing node id; use /api/v1/nodes/{id}.", null, 400);
 			}
-			if ($action === null)         api_handle_node($db, $id);
-			elseif ($action === 'children') api_handle_node_children($db, $id, $_GET);
+			if ($action === null)            api_handle_node($db, $id);
+			elseif ($action === 'children')    api_handle_node_children($db, $id, $_GET);
+			elseif ($action === 'descendants') api_handle_node_descendants($db, $id, $_GET);
 			else api_error(
 				'not_found',
 				"Unknown nodes sub-resource '$action'.",
 				array('id' => $id, 'sub' => $action),
 				404
 			);
+			break;
+
+		case 'hoptree':
+			require_once dirname(__FILE__) . '/handlers/hoptree.php';
+			api_handle_hoptree($db, $_GET);
+			break;
+
+		case 'mrca':
+			require_once dirname(__FILE__) . '/handlers/mrca.php';
+			api_handle_mrca($db, $_GET);
+			break;
+
+		case 'path':
+			require_once dirname(__FILE__) . '/handlers/path.php';
+			api_handle_path($db, $_GET);
+			break;
+
+		case 'search':
+			require_once dirname(__FILE__) . '/handlers/search.php';
+			api_handle_search($db, $_GET);
 			break;
 
 		default:
