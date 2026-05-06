@@ -195,6 +195,57 @@ re-fetching the whole `tree`. PhyQL/Nakhleh primitive.
 }
 ```
 
+### `GET /api/v1/nodes/{id}/summary`
+
+Bundled analytical summary of the clade rooted at this node, for the
+info panel and any "tell me about this node" UI. Single call returns
+several pre-computed answers so the panel doesn't need to fan out to
+multiple endpoints.
+
+Scope is the **OTT subtree** beneath the node (using the same
+`nleft`/`nright` bounds as `/descendants`), *not* the focal subtree
+shown in the viewer. The motivating questions — "is this genus
+monophyletic?", "how much of this clade is taxonomy-only?" — are
+about the whole clade across OTT, not just the displayed sample. For
+view-scoped questions ("what's wrong with this displayed tree?") use
+the `/api/v1/analysis/*` family instead.
+
+```json
+{
+  "id":      "ott917716",
+  "display": "Goniurosaurus",
+  "subtree": {
+    "node_count":              18,
+    "tip_count":               16,
+    "internal_count":          2,
+    "taxonomy_only_tip_count": 13,
+    "taxonomy_only_fraction":  0.81
+  },
+  "evidence": {
+    "supporting_studies":      3,
+    "conflicting_studies":     0,
+    "taxonomy_only":           false
+  },
+  "structure": {
+    "is_polytomy":             true,
+    "child_count":             14,
+    "named_subclade_count":    0
+  },
+  "monophyly": {
+    "name":                       "Goniurosaurus",
+    "tips_with_name_in_subtree":  16,
+    "tips_with_name_in_ott":      16,
+    "is_monophyletic":            true
+  }
+}
+```
+
+`monophyly` is null when the node's display label isn't a single
+binomial-prefix word (e.g. mrca-style "X + Y" labels, "other_*",
+labels with spaces). When present, `tips_with_name_in_ott` /
+`tips_with_name_in_subtree` mismatch flags non-monophyly: the name
+appears outside the clade.
+
 ### `GET /api/v1/path`
 
 Topological path between two nodes (parent-of relationships only),
@@ -227,7 +278,13 @@ The endpoints above expose the *data*. The endpoints under
 the surface the MCP "talk to the tree" tools will sit on top of —
 each is a pure function of the focal subtree and its annotations.
 
-All analysis endpoints accept `taxon` (required) and `k` (default 30).
+For *node-scoped* questions ("tell me about this clade") use
+`/api/v1/nodes/{id}/summary` (above), which operates over the OTT
+subtree beneath a node rather than the displayed focal tree. The
+two surfaces are complementary and share the same underlying
+`analysis.php` library functions.
+
+All `/api/v1/analysis/*` endpoints accept `taxon` (required) and `k` (default 30).
 
 ### `GET /api/v1/analysis/summary`
 
@@ -574,6 +631,7 @@ Rough breakdown — assumes the existing `OttTree` / `SummaryTree` /
 | `/api/v1/analysis/weak-support`                | 1 h          | 3     |
 | `/api/v1/analysis/taxonomy-only`               | 1 h          | 3     |
 | `/api/v1/analysis/polytomies`                  | 1 h          | 3     |
+| `/api/v1/nodes/{id}/summary`                   | 2 h          | 3     |
 | `analysis.php` lib + unit tests                | 3 h          | 3     |
 | MCP server wrapping the analysis endpoints     | 4 h          | 4     |
 | **Tests** — schema (per endpoint)              | 4 h          | 1–3   |
@@ -585,9 +643,9 @@ Rough breakdown — assumes the existing `OttTree` / `SummaryTree` /
 | Optional: OpenAPI spec (`openapi.yaml`)        | 4 h          | post  |
 | **Phase 1 (foundation)**                       | **~1 day**   |       |
 | **Phase 2 (data layer complete)**              | **~1 day**   |       |
-| **Phase 3 (analysis endpoints)**               | **~1 day**   |       |
+| **Phase 3 (analysis endpoints + node summary)**| **~1.5 day** |       |
 | **Phase 4 (MCP wrapper)**                      | **~½ day**   |       |
-| **Total without OpenAPI**                      | **~4 days**  |       |
+| **Total without OpenAPI**                      | **~4.5 days**|       |
 
 The test slice is ~15h on its own (~2 days), which feels honest
 for an API meant to be consumed by third parties. If we cut corners,
@@ -608,12 +666,16 @@ parser check. Migrate `viewer.js` to new URLs and convert legacy
 `*.php` files to thin shims. **End of Phase 2 is the natural
 "viewer running entirely from the API" stopping point.**
 
-**Phase 3 — Analysis layer.** `/analysis/*` endpoints, the `analysis`
-lib, and a small set of fixtures expressing known biological cases
+**Phase 3 — Analysis layer.** Two complementary surfaces sharing one
+lib: `/api/v1/analysis/*` for view-scoped questions ("what's wrong
+with this displayed tree?") and `/api/v1/nodes/{id}/summary` for
+node-scoped questions ("tell me about this clade"). The `analysis.php`
+lib and a small set of fixtures expressing known biological cases
 (non-monophyletic *Goniurosaurus*, *Goniurosaurus* polytomy,
 taxonomy-only-heavy clades). Tests assert specific findings, not just
 shape — these are the "talk to the tree" answers, so they need to be
-right.
+right. The `/nodes/{id}/summary` bundle is what the viewer's info
+panel will consume to surface analytical info per click.
 
 **Phase 4 — MCP wrapper.** Standalone Node or Python process exposing
 the analysis endpoints as MCP tools. Independent of the viewer;
