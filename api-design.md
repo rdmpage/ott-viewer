@@ -64,20 +64,33 @@ The focal subtree, summary-pruned. Replaces `tree.php`.
 | `k`     | int     | `30`           | Summary-tree size budget. |
 | `mode`  | enum    | `leaves`       | `leaves` or `nodes` — see `summary.md`. |
 | `format`| enum    | `json`         | `json` or `newick`. |
+| `labels` | enum   | `ids`          | (newick only) `ids` emits each node's id as the label; `names` emits display names where they're real taxon names and omits the label on internal nodes whose display is synthetic (mrca "X + Y" form, other_*). Tips always get a label. |
+| `branch_lengths` | enum | `none`   | (newick only) `none` (default) drops branch lengths entirely; `ones` emits `:1` for every edge — meaningless placeholder for callers that need a tree the recipient parses as weighted. |
 | `include` | csv   | (all)          | Subset emitted fields: any of `coordinates,annotations,depth,tip_count,supertree_leaf,members`. Use to slim payload. |
 
 JSON response is the schema in `viewer-pipeline-design.md` (`focal_id`,
 `displayed_root_id`, `nodes` map, `edges` list).
 
-`format=newick` returns `text/plain`:
+`format=newick` returns `text/plain`. By default the output drops
+branch lengths and uses node ids as labels:
 
 ```
-((ott1:1,ott2:1)mrcaott1ott2:1,ott3:1)ott452461;
+((ott1,ott2)mrcaott1ott2,ott3)ott452461;
 ```
 
-Branch lengths are `1` for now (placeholder; the displayed tree is a
-cladogram). Internal labels are the node's `id`. A future
-`branch_lengths=weight|tip_count|none` param can change that.
+With `labels=names` real taxon names appear where the node has one,
+synthetic mrca/other_ display strings are omitted on internal nodes,
+and labels containing whitespace or Newick reserved characters
+(`()[]:;,'`) are single-quoted:
+
+```
+((Diomedeidae,Procellariidae)Procellariiformes,Aves);
+```
+
+`branch_lengths=ones` opts back into placeholder `:1` weights for
+callers whose downstream tooling requires a "weighted" tree to parse.
+A future enum value (e.g. `weight`, `tip_count`) can layer real
+quantities on top.
 
 ### `GET /api/v1/hoptree`
 

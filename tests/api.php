@@ -22,6 +22,8 @@ $cases = array(
 	array('name' => 'tree:default',                       'fn' => 'case_tree_default'),
 	array('name' => 'tree:focal=mrca',                    'fn' => 'case_tree_mrca'),
 	array('name' => 'tree:newick',                        'fn' => 'case_tree_newick'),
+	array('name' => 'tree:newick-names',                  'fn' => 'case_tree_newick_names'),
+	array('name' => 'tree:newick-bad-labels-rejected',    'fn' => 'case_tree_newick_bad_labels'),
 	array('name' => 'tree:bad-format',                    'fn' => 'case_tree_bad_format'),
 	array('name' => 'tree:injection-rejected',            'fn' => 'case_tree_injection'),
 	array('name' => 'nodes:root',                         'fn' => 'case_nodes_root'),
@@ -190,6 +192,44 @@ function case_tree_newick($base)
 	if (substr_count($body, '(') !== substr_count($body, ')'))
 	{
 		$err[] = "unbalanced parens in Newick output";
+	}
+	return $err;
+}
+
+function case_tree_newick_names($base)
+{
+	$url = "$base/tree?taxon=mrcaott103870ott121872&k=20&format=newick&labels=names";
+	list($s, $ct, $body) = http_get($url);
+	$err = array();
+	if ($s !== 200) $err[] = "expected 200, got $s";
+	if (stripos($ct, 'text/plain') === false) $err[] = "expected text/plain";
+	$body = trim($body);
+	if (substr($body, -1) !== ';') $err[] = "missing trailing ';'";
+	if (substr_count($body, '(') !== substr_count($body, ')'))
+	{
+		$err[] = "unbalanced parens";
+	}
+	// Real names should appear unquoted; mrca synthetic labels suppressed
+	// on internal nodes (so the substring should NOT appear adjacent to ')').
+	if (strpos($body, 'Apomys') === false)            $err[] = "expected 'Apomys' in body";
+	if (strpos($body, 'mrcaott103870ott121872') !== false)
+	{
+		$err[] = "synthetic root label should be omitted under labels=names";
+	}
+	// Default is no branch lengths — no `:1` should appear.
+	if (strpos($body, ':1') !== false) $err[] = "default output should not include branch lengths";
+	return $err;
+}
+
+function case_tree_newick_bad_labels($base)
+{
+	list($s, $_ct, $body) = http_get("$base/tree?taxon=ott93302&format=newick&labels=botanical");
+	$err = array();
+	if ($s !== 400) $err[] = "expected 400, got $s";
+	$d = decode_json($body);
+	if (!isset($d->error->code) || $d->error->code !== 'bad_request')
+	{
+		$err[] = "expected error.code='bad_request'";
 	}
 	return $err;
 }

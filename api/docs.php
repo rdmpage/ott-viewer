@@ -231,7 +231,9 @@ This is what the viewer fetches on every navigation.</p>
 <tr><th>param</th><th>type</th><th>default</th><th>notes</th></tr>
 <tr><td><code>taxon</code></td><td>string</td><td><code>ott93302</code></td><td>OTT external id or mrca id.</td></tr>
 <tr><td><code>k</code></td><td>int</td><td><code>30</code></td><td>Summary leaf budget. Min 2.</td></tr>
-<tr><td><code>format</code></td><td>enum</td><td><code>json</code></td><td><code>json</code> or <code>newick</code> (placeholder branch lengths of 1).</td></tr>
+<tr><td><code>format</code></td><td>enum</td><td><code>json</code></td><td><code>json</code> or <code>newick</code>.</td></tr>
+<tr><td><code>labels</code></td><td>enum</td><td><code>ids</code></td><td>(newick) <code>ids</code> or <code>names</code>. <code>names</code> emits real taxon names where present and omits internal labels that would otherwise be synthetic mrca strings.</td></tr>
+<tr><td><code>branch_lengths</code></td><td>enum</td><td><code>none</code></td><td>(newick) <code>none</code> (default) drops branch lengths; <code>ones</code> emits <code>:1</code> placeholders.</td></tr>
 </table>
 
 <p>JSON shape (truncated):</p>
@@ -263,7 +265,9 @@ This is what the viewer fetches on every navigation.</p>
 <p class="try">
 	<a href="<?=$base?>/tree?taxon=ott93302&amp;k=20" target="_blank">Try JSON &rarr;</a>
 	&nbsp;·&nbsp;
-	<a href="<?=$base?>/tree?taxon=ott93302&amp;k=8&amp;format=newick" target="_blank">Try Newick &rarr;</a>
+	<a href="<?=$base?>/tree?taxon=mrcaott103870ott121872&amp;k=20&amp;format=newick" target="_blank">Try Newick (ids) &rarr;</a>
+	&nbsp;·&nbsp;
+	<a href="<?=$base?>/tree?taxon=mrcaott103870ott121872&amp;k=20&amp;format=newick&amp;labels=names" target="_blank">Try Newick (names) &rarr;</a>
 </p>
 
 <h2 id="nodes">/nodes</h2>

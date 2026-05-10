@@ -29,7 +29,24 @@ function api_handle_tree(PDO $db, array $params)
 
 	if ($format === 'newick')
 	{
-		api_text(tree_to_newick($payload));
+		$labels = isset($params['labels']) ? strtolower(trim((string)$params['labels'])) : 'ids';
+		$bl     = isset($params['branch_lengths']) ? strtolower(trim((string)$params['branch_lengths'])) : 'none';
+
+		if (!in_array($labels, array('ids', 'names'), true))
+		{
+			api_error('bad_request', "labels must be one of: ids, names",
+				array('param' => 'labels', 'value' => $labels), 400);
+		}
+		if (!in_array($bl, array('none', 'ones'), true))
+		{
+			api_error('bad_request', "branch_lengths must be one of: none, ones",
+				array('param' => 'branch_lengths', 'value' => $bl), 400);
+		}
+
+		api_text(tree_to_newick($payload, array(
+			'labels'         => $labels,
+			'branch_lengths' => $bl,
+		)));
 		return;
 	}
 
