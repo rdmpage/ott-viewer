@@ -72,6 +72,11 @@ try
 			);
 			break;
 
+		case 'subtree':
+			require_once dirname(__FILE__) . '/handlers/subtree.php';
+			api_handle_subtree($db, $_GET);
+			break;
+
 		case 'hoptree':
 			require_once dirname(__FILE__) . '/handlers/hoptree.php';
 			api_handle_hoptree($db, $_GET);

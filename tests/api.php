@@ -24,6 +24,9 @@ $cases = array(
 	array('name' => 'tree:newick',                        'fn' => 'case_tree_newick'),
 	array('name' => 'tree:newick-names',                  'fn' => 'case_tree_newick_names'),
 	array('name' => 'tree:newick-bad-labels-rejected',    'fn' => 'case_tree_newick_bad_labels'),
+	array('name' => 'subtree:small',                      'fn' => 'case_subtree_small'),
+	array('name' => 'subtree:oversize-413',               'fn' => 'case_subtree_oversize'),
+	array('name' => 'subtree:unknown-taxon-404',          'fn' => 'case_subtree_unknown'),
 	array('name' => 'tree:bad-format',                    'fn' => 'case_tree_bad_format'),
 	array('name' => 'tree:injection-rejected',            'fn' => 'case_tree_injection'),
 	array('name' => 'nodes:root',                         'fn' => 'case_nodes_root'),
@@ -230,6 +233,67 @@ function case_tree_newick_bad_labels($base)
 	if (!isset($d->error->code) || $d->error->code !== 'bad_request')
 	{
 		$err[] = "expected error.code='bad_request'";
+	}
+	return $err;
+}
+
+function case_subtree_small($base)
+{
+	$url = "$base/subtree?taxon=mrcaott103870ott121872&labels=names";
+	list($s, $ct, $body) = http_get($url);
+	$err = array();
+	if ($s !== 200) $err[] = "expected 200, got $s";
+	if (stripos($ct, 'text/plain') === false) $err[] = "expected text/plain";
+	$body = trim($body);
+	if (substr($body, -1) !== ';') $err[] = "missing trailing ';'";
+	if (substr_count($body, '(') !== substr_count($body, ')'))
+	{
+		$err[] = "unbalanced parens";
+	}
+	// No upstream stub: shouldn't see anything outside the Apomys+rats clade.
+	if (strpos($body, 'Leporillus') !== false)
+	{
+		$err[] = "subtree must not include upstream stub (Leporillus is the focal's parent)";
+	}
+	// Full subtree should include species NOT in the summary-pruned /tree.
+	if (strpos($body, 'Apomys zambalensis') === false)
+	{
+		$err[] = "expected 'Apomys zambalensis' (only present in the full subtree)";
+	}
+	if (strpos($body, ':1') !== false) $err[] = "default output must not include branch lengths";
+	return $err;
+}
+
+function case_subtree_oversize($base)
+{
+	list($s, $_ct, $body) = http_get("$base/subtree?taxon=ott93302");
+	$err = array();
+	if ($s !== 413) $err[] = "expected 413, got $s";
+	$d = decode_json($body);
+	if (!isset($d->error->code) || $d->error->code !== 'subtree_too_large')
+	{
+		$err[] = "expected error.code='subtree_too_large'";
+	}
+	if (!isset($d->error->details->node_count) || !is_int($d->error->details->node_count))
+	{
+		$err[] = "expected error.details.node_count to be an integer";
+	}
+	if (!isset($d->error->details->max_nodes))
+	{
+		$err[] = "expected error.details.max_nodes";
+	}
+	return $err;
+}
+
+function case_subtree_unknown($base)
+{
+	list($s, $_ct, $body) = http_get("$base/subtree?taxon=ottDOESNOTEXIST");
+	$err = array();
+	if ($s !== 404) $err[] = "expected 404, got $s";
+	$d = decode_json($body);
+	if (!isset($d->error->code) || $d->error->code !== 'node_not_found')
+	{
+		$err[] = "expected error.code='node_not_found'";
 	}
 	return $err;
 }

@@ -92,6 +92,31 @@ callers whose downstream tooling requires a "weighted" tree to parse.
 A future enum value (e.g. `weight`, `tip_count`) can layer real
 quantities on top.
 
+### `GET /api/v1/subtree`
+
+Full OTT subtree rooted at `taxon`, in Newick. Distinct from `/tree`:
+no summary pruning, no coordinates, no upstream stub — just the
+topology rooted exactly at the focal node, suitable for export to
+phylogenetic tooling.
+
+| Param            | Type    | Default   | Notes |
+|------------------|---------|-----------|-------|
+| `taxon`          | string  | required  | OTT external id or mrca id. |
+| `format`         | enum    | `newick`  | `newick` only (json export is a future addition). |
+| `labels`         | enum    | `names`   | `ids` or `names`. With `names`, real taxon names appear where present and synthetic mrca / other_ labels are omitted on internal nodes (same semantics as `/tree?format=newick`). |
+| `branch_lengths` | enum    | `none`    | `none` or `ones`. |
+
+Bounded by a server-side cap (`SUBTREE_MAX_NODES`, currently 50,000).
+Requests that resolve to a larger subtree return **413 Payload Too
+Large** with `error.code = "subtree_too_large"` and the actual count
+in `error.details.node_count` so the caller can re-root on a more
+specific clade.
+
+```text
+(('Apomys minganensis','Apomys zambalensis', ... )Apomys,
+ ((('Rhynchomys soricoides', ... )Rhynchomys, ... )));
+```
+
 ### `GET /api/v1/hoptree`
 
 Spanning subtree of a list of visited nodes. Replaces `hoptree.php`.

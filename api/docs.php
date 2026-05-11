@@ -157,6 +157,7 @@ responses are JSON unless noted; all endpoints accept GET only.
 	<a href="#conventions">Conventions</a>
 	<a href="#about">about</a>
 	<a href="#tree">tree</a>
+	<a href="#subtree">subtree</a>
 	<a href="#nodes">nodes</a>
 	<a href="#hoptree">hoptree</a>
 	<a href="#mrca">mrca</a>
@@ -268,6 +269,44 @@ This is what the viewer fetches on every navigation.</p>
 	<a href="<?=$base?>/tree?taxon=mrcaott103870ott121872&amp;k=20&amp;format=newick" target="_blank">Try Newick (ids) &rarr;</a>
 	&nbsp;·&nbsp;
 	<a href="<?=$base?>/tree?taxon=mrcaott103870ott121872&amp;k=20&amp;format=newick&amp;labels=names" target="_blank">Try Newick (names) &rarr;</a>
+</p>
+
+<h2 id="subtree">/subtree</h2>
+<h3><span class="verb">GET</span><code>/api/v1/subtree?taxon=&hellip;</code></h3>
+<p>Full OTT subtree rooted at <code>taxon</code>, in Newick. Distinct
+from <code>/tree</code>: no summary pruning, no coordinates, no
+upstream stub — just the topology rooted exactly at the focal node,
+suitable for export to phylogenetic tooling.</p>
+
+<table class="params">
+<tr><th>param</th><th>type</th><th>default</th><th>notes</th></tr>
+<tr><td><code>taxon</code></td><td>string</td><td>required</td><td>OTT id or mrca id.</td></tr>
+<tr><td><code>format</code></td><td>enum</td><td><code>newick</code></td><td><code>newick</code> only.</td></tr>
+<tr><td><code>labels</code></td><td>enum</td><td><code>names</code></td><td><code>ids</code> or <code>names</code>. Same semantics as <code>/tree</code>.</td></tr>
+<tr><td><code>branch_lengths</code></td><td>enum</td><td><code>none</code></td><td><code>none</code> or <code>ones</code>.</td></tr>
+</table>
+
+<p>Bounded server-side at 50,000 nodes. Requests that resolve to a
+larger subtree return <strong>413 Payload Too Large</strong> with
+<code>error.code = "subtree_too_large"</code> and the actual count
+in <code>error.details.node_count</code>:</p>
+
+<?php echo code_block('json', '{
+  "error": {
+    "code":    "subtree_too_large",
+    "message": "Subtree has 2725682 nodes; the cap is 50000. Re-root on a more specific clade.",
+    "details": {
+      "taxon":      "ott93302",
+      "node_count": 2725682,
+      "max_nodes":  50000
+    }
+  }
+}'); ?>
+
+<p class="try">
+	<a href="<?=$base?>/subtree?taxon=mrcaott103870ott121872&amp;labels=names" target="_blank">Try it (names) &rarr;</a>
+	&nbsp;·&nbsp;
+	<a href="<?=$base?>/subtree?taxon=mrcaott103870ott121872&amp;labels=ids" target="_blank">Try it (ids) &rarr;</a>
 </p>
 
 <h2 id="nodes">/nodes</h2>
