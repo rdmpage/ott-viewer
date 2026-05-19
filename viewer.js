@@ -16,6 +16,27 @@ const TREE_API     = 'api/v1/tree';
 const HOPTREE_API  = 'api/v1/hoptree';
 const SEARCH_API   = 'api/v1/search';
 
+// ─── Orientation (prototype) ────────────────────────────────────────────────
+// URL param `?orient=v` switches to bottom-to-top with 45°-rotated tip labels.
+// Default 'h' (left-to-right) preserves existing behaviour byte-for-byte.
+// Read once at load; not toggleable mid-session.
+const IS_VERTICAL = ((new URLSearchParams(window.location.search).get('orient') || 'h')
+	.toLowerCase().startsWith('v'));
+
+// Rotate server coords so the cladogram grows bottom-to-top. Server emits
+// x∈[0,100] = depth (root=0, tips=100) and y∈[0,100] = leaf-DFS index.
+// Swap them, then negate the new-y so root lands at large display-y (SVG y
+// points down → "bottom") and tips at small display-y ("top"). fitViewBox
+// frames the negative range; nothing else needs absolute-positive coords.
+function rotateTreeCoords(tree) {
+	if (!tree || !tree.nodes) return;
+	Object.values(tree.nodes).forEach(n => {
+		const sx = n.x;
+		n.x = n.y;
+		n.y = -sx;
+	});
+}
+
 // Counter so concurrent calls (shouldn't happen, but defensive) don't drop
 // the loading state prematurely.
 let pendingFetches = 0;
@@ -34,7 +55,9 @@ async function fetchTree(taxon, k) {
 	if (pendingFetches++ === 0) document.body.classList.add('loading');
 	try {
 		const r = await fetch(TREE_API + '?taxon=' + encodeURIComponent(taxon) + '&k=' + (k|0));
-		return await r.json();
+		const tree = await r.json();
+		if (IS_VERTICAL) rotateTreeCoords(tree);
+		return tree;
 	} finally {
 		if (--pendingFetches === 0) document.body.classList.remove('loading');
 	}
@@ -48,6 +71,7 @@ async function loadTrees() {
 	]);
 	t1 = await r1.json();
 	t2 = await r2.json();
+	if (IS_VERTICAL) { rotateTreeCoords(t1); rotateTreeCoords(t2); }
 	init();
 }
 
@@ -712,8 +736,35 @@ function buildScene(oldTree, newTree) {
 	// Stretch y up to fill, never compress (compression makes tip rows
 	// unreadable). yScale=1 keeps the source 100×100 grid intact. Cached
 	// on the first call so subsequent transitions don't shift persisters.
+	// In vertical mode we COMPRESS y instead and the calculation is
+	// viewport-aware: pick yScale so fitViewBox ends up LEAF-BOUND (sLeaf
+	// ≤ sDepth), which is the regime where leaves fill the full SVG
+	// width. Otherwise the depth-bound regime centres a too-tall tree
+	// with empty space on both sides. Derivation:
+	//   sLeaf  = (W − L − 2m) / treeW
+	//   sDepth = (H − L − m)  / (treeH·yScale + B)
+	//   For sLeaf ≤ sDepth:
+	//     treeH·yScale + B ≤ (H − L − m)·treeW / (W − L − 2m)
+	// Solve for yScale, then take 95% as slack so the bound is firmly
+	// leaf-bound instead of sitting on the equality boundary.
 	let yScale;
-	if (stableYScale !== null) {
+	if (IS_VERTICAL) {
+		if (stableYScale !== null) {
+			yScale = stableYScale;
+		} else {
+			yScale = 0.5;
+			if (treeH > 0 && treeW > 0 && px > 0 && py > 0) {
+				const m = FONT_PX;
+				const visibleLongest = Math.min(longestLabel, TIP_LABEL_MAX_CHARS);
+				const L = visibleLongest * (FONT_PX * 0.5) * Math.SQRT1_2;
+				const B = BRACKET_GUTTER_PAD + BRACKET_LABEL_GAP + LABEL_FONT;
+				const denom = Math.max(1, px - L - 2 * m);
+				const maxScaledY = (py - L - m) * treeW / denom;
+				yScale = Math.max(0.2, Math.min(1, (maxScaledY - B) / treeH * 0.95));
+			}
+			stableYScale = yScale;
+		}
+	} else if (stableYScale !== null) {
 		yScale = stableYScale;
 	} else {
 		yScale = 1;
@@ -743,18 +794,25 @@ function buildScene(oldTree, newTree) {
 			if (cur in newById) return { x: newById[cur].x, y: newById[cur].y };
 			cur = oldParent[cur];
 		}
-		return { x: 0, y: oldById[id].y };
+		// Slide off toward the root margin. In horizontal mode that's
+		// x=0 (left). In vertical mode root sits at y=0 (post-rotation:
+		// display_y = −server_x, with server_x=0 at root), so slide down.
+		return IS_VERTICAL
+			? { x: oldById[id].x, y: 0 }
+			: { x: 0, y: oldById[id].y };
 	}
 
 	// Find nearest persistent ancestor for an enter node — returns anchor's OLD pos.
-	// If no persistent ancestor exists, the node grows in from the left edge.
+	// If no persistent ancestor exists, the node grows in from the root edge.
 	function enterAnchor(id) {
 		let cur = newParent[id];
 		while (cur) {
 			if (cur in oldById) return { x: oldById[cur].x, y: oldById[cur].y };
 			cur = newParent[cur];
 		}
-		return { x: 0, y: newById[id].y };
+		return IS_VERTICAL
+			? { x: newById[id].x, y: 0 }
+			: { x: 0, y: newById[id].y };
 	}
 
 	// ── Nodes ──
@@ -835,46 +893,54 @@ function buildScene(oldTree, newTree) {
 		edges.push({ source: e.source, target: e.target, kind });
 	});
 
-	// Smallest x-step across all parent→child edges in either tree. Used as
-	// the annotation slot WIDTH so the support / conflict numbers occupy a
-	// consistent position next to every node, even where the actual incoming
-	// edge is much longer.
-	let minStepX = Infinity;
+	// Smallest step on the DEPTH axis across all parent→child edges in
+	// either tree. Used as the annotation slot's along-edge size so the
+	// support / conflict numbers occupy a consistent position next to
+	// every node, even where the actual incoming edge is much longer.
+	// Depth axis: x in horizontal, y in vertical (post-rotation).
+	const depthAxis = IS_VERTICAL ? 'y' : 'x';
+	const tipAxis   = IS_VERTICAL ? 'x' : 'y';
+	let minStepDepth = Infinity;
 	[[oldTree, oldById], [newTree, newById]].forEach(([tree, byId]) => {
 		tree.edges.forEach(e => {
 			const src = byId[e.source];
 			const tgt = byId[e.target];
 			if (src && tgt) {
-				const dx = Math.abs(tgt.x - src.x);
-				if (dx > 0.001 && dx < minStepX) minStepX = dx;
+				const d = Math.abs(tgt[depthAxis] - src[depthAxis]);
+				if (d > 0.001 && d < minStepDepth) minStepDepth = d;
 			}
 		});
 	});
-	if (minStepX === Infinity) minStepX = STYLE.labelFontSize;
+	if (minStepDepth === Infinity) minStepDepth = STYLE.labelFontSize;
 
-	// Smallest y-step between adjacent TIP rows in either tree (leaves and
-	// other_ placeholders — the things drawn at the right edge). Internal
-	// nodes are positioned at midpoints of their children, so including
-	// them would give a much smaller minimum and shrink the annotation
-	// slot below text-readable size. Computed per tree, then we take the
-	// smaller of the two so the slot is stable across the animation.
-	function tipMinStepY(byId) {
-		const ys = [];
+	// Smallest step between adjacent TIP rows (leaves + other_ placeholders)
+	// on the tip axis. Internal nodes are positioned at midpoints of their
+	// children, so including them would shrink the annotation slot below
+	// text-readable size. Computed per tree, then take the smaller so the
+	// slot is stable across the animation.
+	function tipMinStep(byId) {
+		const vs = [];
 		Object.values(byId).forEach(n => {
-			if (n.type === 'leaf' || n.type === 'other') ys.push(n.y);
+			if (n.type === 'leaf' || n.type === 'other') vs.push(n[tipAxis]);
 		});
-		ys.sort((a, b) => a - b);
+		vs.sort((a, b) => a - b);
 		let m = Infinity;
-		for (let i = 1; i < ys.length; i++) {
-			const dy = ys[i] - ys[i - 1];
-			if (dy > 0.001 && dy < m) m = dy;
+		for (let i = 1; i < vs.length; i++) {
+			const dv = vs[i] - vs[i - 1];
+			if (dv > 0.001 && dv < m) m = dv;
 		}
 		return m;
 	}
-	let minStepY = Math.min(tipMinStepY(oldById), tipMinStepY(newById));
-	if (!isFinite(minStepY)) minStepY = STYLE.labelFontSize;
+	let minStepTip = Math.min(tipMinStep(oldById), tipMinStep(newById));
+	if (!isFinite(minStepTip)) minStepTip = STYLE.labelFontSize;
 
-	return { nodes, edges, minStepX, minStepY };
+	// Legacy field names kept for callers: in horizontal mode minStepX is
+	// the depth step and minStepY is the tip step. In vertical mode they
+	// swap roles (depth is along y, tip is along x), so re-map.
+	const minStepX = IS_VERTICAL ? minStepTip   : minStepDepth;
+	const minStepY = IS_VERTICAL ? minStepDepth : minStepTip;
+
+	return { nodes, edges, minStepX, minStepY, minStepDepth, minStepTip };
 }
 
 // ─── Interpolation ──────────────────────────────────────────────────────────
@@ -920,11 +986,20 @@ const K_MAX   = 80;
 const TIP_LABEL_MAX_CHARS = 32;
 
 function idealK() {
-	const elPy = (svg && svg.clientHeight) || window.innerHeight || 600;
+	// k is budgeted against the leaf-axis dimension: vertical pixels for
+	// horizontal trees (rows stack vertically), horizontal pixels for
+	// vertical trees (columns run left-to-right).
+	const elPy = IS_VERTICAL
+		? ((svg && svg.clientWidth)  || window.innerWidth  || 1000)
+		: ((svg && svg.clientHeight) || window.innerHeight || 600);
+	// Vertical mode needs ~√2× the per-leaf pitch because the 45° label
+	// band stacks diagonally and adjacent labels are separated by
+	// pitch·cos(45°). Stay on the same K_STEP grid so resizes don't thrash.
+	const rowPx = IS_VERTICAL ? ROW_PX * 1.5 : ROW_PX;
 	// Need (k-1) rows between leaves + 2 rows of top/bottom pad → k+1 rows
 	// total. Snap DOWN to a K_STEP boundary so we never overfill the SVG;
 	// rounding to nearest could pick a k that doesn't fit.
-	const maxK = Math.floor(elPy / ROW_PX) - 1;
+	const maxK = Math.floor(elPy / rowPx) - 1;
 	const snap = Math.floor(maxK / K_STEP) * K_STEP;
 	return Math.max(K_MIN, Math.min(K_MAX, snap));
 }
@@ -1044,17 +1119,19 @@ function computeBracketState(tree, scene) {
 		children[e.source].push(e.target);
 	});
 
-	// Per-node y-range (clade extent) — memoised DFS over the displayed
-	// edges using the scene's at-rest y. Tip count comes from tree.php
-	// directly (n.tip_count), so we only need min/max here.
+	// Per-node leaf-axis range (clade extent) — memoised DFS over the
+	// displayed edges using the scene's at-rest coords. Tip count comes
+	// from tree.php directly (n.tip_count), so we only need min/max here.
+	// Leaf axis is y for horizontal trees, x for vertical (post-rotation).
+	const leafAxisOf = p => (IS_VERTICAL ? p.x : p.y);
 	const yRanges = {};
 	function yRangeOf(id) {
 		if (yRanges[id]) return yRanges[id];
 		const kids = children[id] || [];
-		const yPos = (toById[id] && toById[id].y != null)
-			? toById[id].y
-			: ((nodes[id] && nodes[id].y) || 0);
-		if (kids.length === 0) return yRanges[id] = { min: yPos, max: yPos };
+		const pos = (toById[id] && leafAxisOf(toById[id]) != null)
+			? leafAxisOf(toById[id])
+			: (nodes[id] ? leafAxisOf(nodes[id]) : 0);
+		if (kids.length === 0) return yRanges[id] = { min: pos, max: pos };
 		let min = Infinity, max = -Infinity;
 		kids.forEach(c => {
 			const r = yRangeOf(c);
@@ -1130,11 +1207,19 @@ function render(scene) {
 		const opacity = Math.min(src.currentOpacity, tgt.currentOpacity);
 		if (opacity < 0.01) return;
 
-		// Cladogram L-shape: vertical at parent x, then horizontal to child
+		// Cladogram L-shape.
+		//   Horizontal: vertical at parent x, then horizontal to child.
+		//   Vertical:   horizontal at parent y, then vertical to child
+		//               (so children rise from a horizontal "shoulder" instead
+		//               of branching off a vertical spine).
 		const path = document.createElementNS(NS, 'path');
-		const d = `M ${src.current.x},${src.current.y}`
-			+ ` L ${src.current.x},${tgt.current.y}`
-			+ ` L ${tgt.current.x},${tgt.current.y}`;
+		const d = IS_VERTICAL
+			? `M ${src.current.x},${src.current.y}`
+				+ ` L ${tgt.current.x},${src.current.y}`
+				+ ` L ${tgt.current.x},${tgt.current.y}`
+			: `M ${src.current.x},${src.current.y}`
+				+ ` L ${src.current.x},${tgt.current.y}`
+				+ ` L ${tgt.current.x},${tgt.current.y}`;
 		path.setAttribute('d', d);
 		path.setAttribute('fill', 'none');
 		path.setAttribute('stroke', kindColor(e.kind));
@@ -1190,16 +1275,18 @@ function render(scene) {
 			marker.setAttribute('stroke-width', STYLE.hollowStrokeWidth);
 			marker.setAttribute('class', 'tree-node is-hollow');
 		} else if (isTip && !isSupertreeLeaf) {
-			// Left-pointing triangle. Base aligned to the right with the
-			// other tip markers; apex points into the tree, so the marker
-			// reads as "stand-in for what's hidden behind here" rather
-			// than sticking a tail out past the tip column.
+			// Collapsed-subtree-root marker — apex points "into the tree"
+			// (toward root), so the marker reads as "stand-in for what's
+			// hidden behind here". Horizontal mode: apex points left.
+			// Vertical mode: apex points DOWN (root sits at the bottom),
+			// achieved by a rotate(-90) which sends (-r,0) → (0,r).
 			marker = document.createElementNS(NS, 'polygon');
 			const r = STYLE.circleR;
 			marker.setAttribute('points',
 				r    + ',' + (-r) + ' ' +
 				r    + ',' + r    + ' ' +
 				(-r) + ',0');
+			if (IS_VERTICAL) marker.setAttribute('transform', 'rotate(-90)');
 			marker.setAttribute('fill', kindColor(n.kind));
 			marker.setAttribute('class', 'tree-node');
 		} else {
@@ -1232,8 +1319,22 @@ function render(scene) {
 		const peekOpenForThisNode = peekState && peekState.nodeId === n.id;
 		if (isTip && !peekOpenForThisNode) {
 			const text = document.createElementNS(NS, 'text');
-			text.setAttribute('x', STYLE.labelDx);
-			text.setAttribute('y', STYLE.labelDy);
+			if (IS_VERTICAL) {
+				// Place the label start DIRECTLY above the node by
+				// labelDx, then rotate -45° around that start point so
+				// the label runs up-and-to-the-right at 45°. Rotating
+				// around the start (rather than the node centre) keeps
+				// the label visually aligned with the tip — no rightward
+				// shift in the column.
+				const ly = -STYLE.labelDx;
+				text.setAttribute('x', 0);
+				text.setAttribute('y', ly);
+				text.setAttribute('transform', `rotate(-45 0 ${ly})`);
+				text.setAttribute('text-anchor', 'start');
+			} else {
+				text.setAttribute('x', STYLE.labelDx);
+				text.setAttribute('y', STYLE.labelDy);
+			}
 			text.setAttribute('font-size', STYLE.labelFontSize);
 			text.setAttribute('class', 'label');
 			text.setAttribute('data-node-id', n.id);
@@ -1268,13 +1369,22 @@ function render(scene) {
 		if (!isTip && !n.id.startsWith('other_') && n.type !== 'stub') {
 			const a = nodeAnnotation(n);
 			if (a) {
-				const slotCenterX = STYLE.annotSlotRightDx - scene.minStepX / 2;
-				const halfStepY   = scene.minStepY / 2;
+				// Slot lies along the incoming edge, half a depth-step away
+				// from the node, with the two numbers flanking the edge by
+				// half a tip-step. In horizontal the edge approaches from
+				// −x (left); in vertical it approaches from +y (below, since
+				// SVG y points down and root is at the bottom).
+				const slotAlong = scene.minStepDepth / 2;
+				const halfTip   = scene.minStepTip / 2;
+				const supX = IS_VERTICAL ? -halfTip : -slotAlong;
+				const supY = IS_VERTICAL ?  slotAlong : -halfTip;
+				const conX = IS_VERTICAL ?  halfTip : -slotAlong;
+				const conY = IS_VERTICAL ?  slotAlong :  halfTip;
 				if (a.supported > 0) {
 					const up = document.createElementNS(NS, 'text');
 					up.setAttribute('class', 'annot-support');
-					up.setAttribute('x', slotCenterX);
-					up.setAttribute('y', -halfStepY);
+					up.setAttribute('x', supX);
+					up.setAttribute('y', supY);
 					up.setAttribute('font-size', STYLE.annotFontSize);
 					up.setAttribute('text-anchor', 'middle');
 					up.setAttribute('dominant-baseline', 'central');
@@ -1284,8 +1394,8 @@ function render(scene) {
 				if (a.conflicts > 0) {
 					const dn = document.createElementNS(NS, 'text');
 					dn.setAttribute('class', 'annot-conflict');
-					dn.setAttribute('x', slotCenterX);
-					dn.setAttribute('y', halfStepY);
+					dn.setAttribute('x', conX);
+					dn.setAttribute('y', conY);
 					dn.setAttribute('font-size', STYLE.annotFontSize);
 					dn.setAttribute('text-anchor', 'middle');
 					dn.setAttribute('dominant-baseline', 'central');
@@ -1339,40 +1449,77 @@ function render(scene) {
 		const fadeOpacity = (currentT - BRACKET_REST_THRESHOLD) /
 		                    (1 - BRACKET_REST_THRESHOLD);
 
-		// Right edge of the rendered tip-label band sets the gutter origin.
+		// Gutter origin = far end of the rendered tip-label band.
+		//   Horizontal: brackets are vertical bars to the right of labels.
+		//   Vertical:   brackets are horizontal bars above the diagonal
+		//               label band; 45° labels project by cos(45°) on each
+		//               axis, so the topmost label point is offset upward
+		//               by (labelDx + visibleLen·charW)·cos(45°).
 		const charW = STYLE.labelFontSize * 0.5;
-		let labelEndMax = -Infinity;
-		scene.nodes.forEach(n => {
-			if (n.toOpacity < 0.5) return;
-			if (!n.isTipNew) return;
-			const visibleLen = Math.min((n.display || '').length, TIP_LABEL_MAX_CHARS);
-			const labelEnd = n.to.x + STYLE.labelDx + visibleLen * charW;
-			if (labelEnd > labelEndMax) labelEndMax = labelEnd;
-		});
-		if (!isFinite(labelEndMax)) labelEndMax = 0;
-		const trackBaseX = labelEndMax + BRACKET_GUTTER_PAD;
-
 		const layer = document.createElementNS(NS, 'g');
 		layer.setAttribute('class', 'bracket-layer');
 		layer.setAttribute('opacity', fadeOpacity);
 
-		bracketState.placed.forEach(p => {
-			const bx = trackBaseX + p.track * BRACKET_TRACK_W;
-			const path = document.createElementNS(NS, 'path');
-			path.setAttribute('d', `M ${bx} ${p.range.min} L ${bx} ${p.range.max}`);
-			path.setAttribute('class', 'bracket-line');
-			path.setAttribute('stroke-width', STYLE.hollowStrokeWidth);
-			layer.appendChild(path);
+		if (IS_VERTICAL) {
+			let labelTopMin = Infinity;
+			scene.nodes.forEach(n => {
+				if (n.toOpacity < 0.5) return;
+				if (!n.isTipNew) return;
+				const visibleLen = Math.min((n.display || '').length, TIP_LABEL_MAX_CHARS);
+				const labelTop = n.to.y - (STYLE.labelDx + visibleLen * charW) * Math.SQRT1_2;
+				if (labelTop < labelTopMin) labelTopMin = labelTop;
+			});
+			if (!isFinite(labelTopMin)) labelTopMin = 0;
+			const trackBaseY = labelTopMin - BRACKET_GUTTER_PAD;
 
-			const txt = document.createElementNS(NS, 'text');
-			txt.setAttribute('x', bx + BRACKET_LABEL_GAP);
-			txt.setAttribute('y', (p.range.min + p.range.max) / 2);
-			txt.setAttribute('font-size', STYLE.labelFontSize);
-			txt.setAttribute('class', 'bracket-label');
-			txt.setAttribute('dominant-baseline', 'central');
-			txt.textContent = p.display || p.id;
-			layer.appendChild(txt);
-		});
+			bracketState.placed.forEach(p => {
+				// Additional tracks stack upward (smaller y).
+				const by = trackBaseY - p.track * BRACKET_TRACK_W;
+				const path = document.createElementNS(NS, 'path');
+				path.setAttribute('d', `M ${p.range.min} ${by} L ${p.range.max} ${by}`);
+				path.setAttribute('class', 'bracket-line');
+				path.setAttribute('stroke-width', STYLE.hollowStrokeWidth);
+				layer.appendChild(path);
+
+				const txt = document.createElementNS(NS, 'text');
+				txt.setAttribute('x', (p.range.min + p.range.max) / 2);
+				txt.setAttribute('y', by - BRACKET_LABEL_GAP);
+				txt.setAttribute('font-size', STYLE.labelFontSize);
+				txt.setAttribute('class', 'bracket-label');
+				txt.setAttribute('text-anchor', 'middle');
+				txt.textContent = p.display || p.id;
+				layer.appendChild(txt);
+			});
+		} else {
+			let labelEndMax = -Infinity;
+			scene.nodes.forEach(n => {
+				if (n.toOpacity < 0.5) return;
+				if (!n.isTipNew) return;
+				const visibleLen = Math.min((n.display || '').length, TIP_LABEL_MAX_CHARS);
+				const labelEnd = n.to.x + STYLE.labelDx + visibleLen * charW;
+				if (labelEnd > labelEndMax) labelEndMax = labelEnd;
+			});
+			if (!isFinite(labelEndMax)) labelEndMax = 0;
+			const trackBaseX = labelEndMax + BRACKET_GUTTER_PAD;
+
+			bracketState.placed.forEach(p => {
+				const bx = trackBaseX + p.track * BRACKET_TRACK_W;
+				const path = document.createElementNS(NS, 'path');
+				path.setAttribute('d', `M ${bx} ${p.range.min} L ${bx} ${p.range.max}`);
+				path.setAttribute('class', 'bracket-line');
+				path.setAttribute('stroke-width', STYLE.hollowStrokeWidth);
+				layer.appendChild(path);
+
+				const txt = document.createElementNS(NS, 'text');
+				txt.setAttribute('x', bx + BRACKET_LABEL_GAP);
+				txt.setAttribute('y', (p.range.min + p.range.max) / 2);
+				txt.setAttribute('font-size', STYLE.labelFontSize);
+				txt.setAttribute('class', 'bracket-label');
+				txt.setAttribute('dominant-baseline', 'central');
+				txt.textContent = p.display || p.id;
+				layer.appendChild(txt);
+			});
+		}
 		svg.appendChild(layer);
 	}
 
@@ -1454,6 +1601,8 @@ function renderPeek() {
 
 	const anchor = scene && scene.nodes.find(n => n.id === nodeId);
 	if (!anchor || anchor.currentOpacity < 0.01) { closePeek(); return; }
+
+	if (IS_VERTICAL) { renderPeekVertical(anchor, members); return; }
 
 	// Remove any stale overlay and re-render in full.
 	const stale = document.getElementById('peek-overlay');
@@ -1625,6 +1774,207 @@ function renderPeek() {
 	svg.appendChild(g);
 }
 
+// Vertical-orientation peek: the cladogram grows bottom-to-top so the
+// "other_" tip's collapsed siblings expand UPWARD from the anchor with
+// 45°-rotated labels (MacClade convention). Mirrors the horizontal layout
+// across the diagonal: trunk runs horizontally, branches rise vertically,
+// labels rotate so they read up-and-right.
+function renderPeekVertical(anchor, members) {
+	const stale = document.getElementById('peek-overlay');
+	if (stale) stale.remove();
+
+	const raw   = Math.min(1, (performance.now() - peekOpenedAt) / PEEK_DURATION);
+	const t     = 1 - Math.pow(1 - raw, 3);
+	const lerp  = (a, b) => a + (b - a) * t;
+
+	const font         = STYLE.labelFontSize;
+	const colW         = font * 1.4;            // per-member column pitch
+	const branchDy     = font;
+	const circleR      = STYLE.circleR;
+	const circleToText = font * 0.6;
+	const padX         = font * 0.5;
+	const padY         = font * 0.3;
+	const charW        = font * 0.5;
+
+	const trunkY = anchor.current.y - circleR - branchDy;
+
+	// Windowing on the cross axis (now horizontal — vb.width).
+	const vb            = svg.viewBox.baseVal;
+	const maxColsByVB   = Math.max(2, Math.floor((vb.width * 0.70) / colW));
+	const totalCols     = members.length;
+	const visibleCols   = Math.min(totalCols, maxColsByVB);
+	const windowed      = visibleCols < totalCols;
+
+	if (peekScroll < 0) peekScroll = 0;
+	if (peekScroll > totalCols - visibleCols) peekScroll = totalCols - visibleCols;
+
+	const totalW    = Math.max(0, (visibleCols - 1) * colW);
+	let leftTarget  = anchor.current.x - totalW / 2;
+	const minX      = vb.x + padX * 2;
+	const maxXClamp = vb.x + vb.width - padX * 2 - totalW;
+	if (leftTarget < minX)      leftTarget = minX;
+	if (leftTarget > maxXClamp) leftTarget = maxXClamp;
+
+	// Per-circle origin above the trunk where labels start (rotated -45°
+	// around this point so they read up-and-to-the-right).
+	const labelOriginDy = branchDy + circleR * 2 + circleToText;
+
+	const longest    = members.reduce((acc, m) => Math.max(acc, m.display.length), 0);
+	const longestLen = longest * charW;
+	// Backdrop = hexagonal polygon: a rect over the trunk+branches+circles
+	// area, joined to a 45° parallelogram backing the diagonal label band.
+	// Single closed shape so the semi-transparent fill doesn't double-darken
+	// where two rects would overlap.
+	//
+	//      TL .─────────────. TR     ← top of label parallelogram
+	//        ╱             ╱
+	//       ╱  (labels)   ╱          ← 45° slant matches label rotation
+	//      ╱             ╱
+	// ML  .─────────────.  MR        ← y = labelStartY  (label baseline)
+	//     │             │
+	//     │ trunk+heads │            ← rect over trunk/branches/circles
+	//     │             │
+	// BL  .─────────────.  BR        ← y = trunkY + padY
+	//
+	const diag        = longestLen * Math.SQRT1_2;
+	const labelStartY = trunkY - labelOriginDy;
+	const headLeft    = leftTarget - padX;
+	const headRight   = leftTarget + totalW + padX;
+	const headBot     = trunkY + padY;
+	const headTop     = labelStartY;
+	const polyTopY    = labelStartY - diag;
+	const polyTopLX   = headLeft  + diag;
+	const polyTopRX   = headRight + diag;
+
+	const g = document.createElementNS(NS, 'g');
+	g.setAttribute('id', 'peek-overlay');
+	g.setAttribute('opacity', t);
+
+	// Animate from a collapsed point at the anchor to the full hexagon.
+	const ax = anchor.current.x, ay = anchor.current.y;
+	const corners = [
+		[headLeft,  headBot],
+		[headRight, headBot],
+		[headRight, headTop],
+		[polyTopRX, polyTopY],
+		[polyTopLX, polyTopY],
+		[headLeft,  headTop],
+	];
+	const points = corners
+		.map(([x, y]) => `${lerp(ax, x)},${lerp(ay, y)}`)
+		.join(' ');
+	const back = document.createElementNS(NS, 'polygon');
+	back.setAttribute('class', 'peek-backdrop');
+	back.setAttribute('points', points);
+	g.appendChild(back);
+
+	// Lead from the node circle upward to the trunk.
+	const lead = document.createElementNS(NS, 'line');
+	lead.setAttribute('class', 'peek-edge');
+	lead.setAttribute('x1', anchor.current.x);
+	lead.setAttribute('y1', anchor.current.y - circleR);
+	lead.setAttribute('x2', anchor.current.x);
+	lead.setAttribute('y2', trunkY);
+	g.appendChild(lead);
+
+	if (visibleCols > 1) {
+		const trunk = document.createElementNS(NS, 'line');
+		trunk.setAttribute('class', 'peek-edge');
+		trunk.setAttribute('x1', lerp(anchor.current.x, leftTarget));
+		trunk.setAttribute('y1', trunkY);
+		trunk.setAttribute('x2', lerp(anchor.current.x, leftTarget + totalW));
+		trunk.setAttribute('y2', trunkY);
+		g.appendChild(trunk);
+	}
+
+	for (let col = 0; col < visibleCols; col++) {
+		const i        = peekScroll + col;
+		const m        = members[i];
+		const xTarget  = leftTarget + col * colW;
+		const x        = lerp(anchor.current.x, xTarget);
+
+		const branch = document.createElementNS(NS, 'line');
+		branch.setAttribute('class', 'peek-edge');
+		branch.setAttribute('x1', x);
+		branch.setAttribute('y1', trunkY);
+		branch.setAttribute('x2', x);
+		branch.setAttribute('y2', trunkY - branchDy);
+		if (isTaxonomyOnly(m)) {
+			const w = STYLE.edgeStrokeWidth;
+			branch.setAttribute('stroke-dasharray', `${w * 3} ${w * 2}`);
+		}
+		g.appendChild(branch);
+
+		const cy = trunkY - branchDy - circleR;
+		const circle = document.createElementNS(NS, 'circle');
+		const isLeaf = ('supertree_leaf' in m) ? !!m.supertree_leaf : ((m.weight || 0) <= 1);
+		circle.setAttribute('class', isLeaf ? 'peek-node-solid' : 'peek-node-hollow');
+		circle.setAttribute('cx', x);
+		circle.setAttribute('cy', cy);
+		circle.setAttribute('r',  circleR);
+		g.appendChild(circle);
+
+		// Hit rect on a tight axis-aligned box covering the label region.
+		// Sized to longest label so all hits are uniform; visually the
+		// label diagonal may not fill the box exactly, which is fine for
+		// click targeting.
+		const labelLen = m.display.length * charW;
+		const hit = document.createElementNS(NS, 'rect');
+		hit.setAttribute('class', 'peek-hit');
+		hit.setAttribute('x', x - colW * 0.4);
+		hit.setAttribute('y', trunkY - labelOriginDy - labelLen * Math.SQRT1_2);
+		hit.setAttribute('width', colW * 0.8 + labelLen * Math.SQRT1_2);
+		hit.setAttribute('height', labelLen * Math.SQRT1_2);
+		hit.addEventListener('click', (ev) => {
+			ev.stopPropagation();
+			closePeek();
+			navigateTo(m.id);
+		});
+		g.appendChild(hit);
+
+		const ty = trunkY - labelOriginDy;
+		const text = document.createElementNS(NS, 'text');
+		text.setAttribute('class', 'peek-label');
+		text.setAttribute('font-size', font);
+		text.setAttribute('x', x);
+		text.setAttribute('y', ty);
+		text.setAttribute('text-anchor', 'start');
+		text.setAttribute('transform', `rotate(-45 ${x} ${ty})`);
+		text.textContent = m.display;
+		g.appendChild(text);
+	}
+
+	if (windowed) {
+		const chevronW = font * 0.7;
+		const chevronH = font * 0.5;
+		const cy = trunkY - branchDy - circleR;
+		// Vertical-mode columns scroll left/right, so the chevrons point
+		// left (at leftTarget) and right (at leftTarget+totalW).
+		if (peekScroll > 0) {
+			const left = document.createElementNS(NS, 'path');
+			const xLeft = leftTarget - colW / 2 - padX;
+			left.setAttribute('class', 'peek-scroll-indicator');
+			left.setAttribute('d',
+				'M ' + (xLeft + chevronH) + ' ' + (cy - chevronW / 2) +
+				' L ' + xLeft + ' ' + cy +
+				' L ' + (xLeft + chevronH) + ' ' + (cy + chevronW / 2) + ' Z');
+			g.appendChild(left);
+		}
+		if (peekScroll + visibleCols < totalCols) {
+			const right = document.createElementNS(NS, 'path');
+			const xRight = leftTarget + totalW + colW / 2 + padX;
+			right.setAttribute('class', 'peek-scroll-indicator');
+			right.setAttribute('d',
+				'M ' + (xRight - chevronH) + ' ' + (cy - chevronW / 2) +
+				' L ' + xRight + ' ' + cy +
+				' L ' + (xRight - chevronH) + ' ' + (cy + chevronW / 2) + ' Z');
+			g.appendChild(right);
+		}
+	}
+
+	svg.appendChild(g);
+}
+
 // Wheel scrolling for a windowed peek. Registered once at the SVG level
 // because attaching to the peek's <g> isn't reliable in Safari (wheel
 // events don't always bubble to inner SVG groups). We compute the
@@ -1637,7 +1987,9 @@ svg.addEventListener('wheel', (ev) => {
 	const font      = STYLE.labelFontSize;
 	const rowH      = font * 1.4;
 	const vb        = svg.viewBox.baseVal;
-	const maxRows   = Math.max(2, Math.floor((vb.height * 0.70) / rowH));
+	// Cross-axis flips with orientation: vertical peek scrolls along x.
+	const crossExtent = IS_VERTICAL ? vb.width : vb.height;
+	const maxRows   = Math.max(2, Math.floor((crossExtent * 0.70) / rowH));
 	if (maxRows >= totalRows) return;       // list fits, nothing to scroll
 	ev.preventDefault();
 	const next = peekScroll + (ev.deltaY > 0 ? 1 : -1);
@@ -1664,6 +2016,10 @@ let animId = null;
 let currentT = 0;
 
 function init() {
+	// Vertical mode: anchor the viewBox at xMid/yMax so the root stays at
+	// the bottom of the SVG and extra width is split evenly left/right.
+	// Horizontal default (xMinYMid meet) keeps the root left-anchored.
+	if (IS_VERTICAL) svg.setAttribute('preserveAspectRatio', 'xMidYMax meet');
 	scene = buildScene(t1, t2);
 	bracketState = computeBracketState(t2, scene);
 	fitViewBox(scene);
@@ -1695,6 +2051,15 @@ function capSizesForViewport() {
 	STYLE.circleR           = userUnits(5);
 	STYLE.edgeStrokeWidth   = userUnits(2);
 	STYLE.hollowStrokeWidth = userUnits(1);
+
+	// labelDx = inter-leaf step + circle radius, so the gap from the
+	// circle edge to the label start equals the spacing between adjacent
+	// leaf rows/columns. Both terms in user-space units so the gap stays
+	// visually consistent with leaf spacing at any zoom. Without this, the
+	// old hard-coded value (NODE_R + 2.5 user-units) drifted with viewBox
+	// scale and either crowded or floated the labels.
+	const interLeafUs = (scene && scene.minStepTip) ? scene.minStepTip : userUnits(ROW_PX);
+	STYLE.labelDx = interLeafUs + STYLE.circleR;
 
 	// Pipe the stroke widths to peek CSS via custom properties — peek
 	// elements pick them up through var() in .peek-edge / .peek-node-hollow.
@@ -1736,7 +2101,7 @@ function fitViewBox(scene) {
 		const visibleLen = Math.min(n.display.length, TIP_LABEL_MAX_CHARS);
 		if (visibleLen > longest) longest = visibleLen;
 	});
-	const treeXExtent = maxX - minX;
+	const treeXExtent = Math.max(maxX - minX, 1);
 	const treeYExtent = Math.max(maxY - minY, 1);   // guard: divide-by-zero on degenerate scenes
 
 	// Use currentK (the window-derived budget) rather than the new tree's
@@ -1749,33 +2114,64 @@ function fitViewBox(scene) {
 	const elPx = svg.clientWidth  || 1000;
 	const elPy = svg.clientHeight || 600;
 
-	const scale = ROW_PX * (k - 1) / treeYExtent;
-
-	let vh = elPy / scale;
-	let vw = elPx / scale;
-
-	// Horizontal data fit. Label and bracket widths are pixel-anchored
-	// (font is pinned to FONT_PX in capSizesForViewport), so estimate
-	// label width as (longest × FONT_PX × 0.5) pixels. Convert tree
-	// extent to pixels and check the total fits in svgPx; if not, drop
-	// the scale uniformly so nothing clips.
-	const labelMarginPx   = longest * FONT_PX * 0.5;
+	const marginPx        = FONT_PX;
+	// 45°-rotated labels project by cos(45°) on each axis; their reach
+	// counts against the LEAF-axis budget too (because the rightmost
+	// label's projection slides past the rightmost tip horizontally).
+	const labelMarginPx   = longest * FONT_PX * 0.5 * (IS_VERTICAL ? Math.SQRT1_2 : 1);
 	const bracketGutterPx = (bracketState && bracketState.trackCount > 0)
 		? FONT_PX + bracketState.trackCount * FONT_PX * 9
 		: 0;
-	const marginPx        = FONT_PX;
-	const treeXPx         = treeXExtent * scale;
-	const dataPxNeed      = treeXPx + labelMarginPx + bracketGutterPx + marginPx * 2;
+
+	let scale, vw, vh;
 	let bound = 'row';
-	if (dataPxNeed > elPx) {
-		const factor = dataPxNeed / elPx;
-		vw *= factor;
-		vh *= factor;
-		bound = 'data';
+	if (IS_VERTICAL) {
+		// Vertical: pick scale to satisfy BOTH axes — leaves fill the SVG
+		// width (minus the right-side label diagonal), AND depth + label
+		// band + bracket gutter fit the SVG height. The bracket band uses
+		// the original LABEL_FONT module constant (not STYLE.labelFontSize,
+		// which is set later by capSizesForViewport).
+		const bracketBandUs = BRACKET_GUTTER_PAD + BRACKET_LABEL_GAP + LABEL_FONT;
+		const leafBudgetPx  = Math.max(1, elPx - labelMarginPx - marginPx * 2);
+		const depthBudgetPx = Math.max(1, elPy - labelMarginPx - marginPx);
+		const sLeaf  = leafBudgetPx  / Math.max(1, treeXExtent);
+		const sDepth = depthBudgetPx / Math.max(1, treeYExtent + bracketBandUs);
+		scale = Math.min(sLeaf, sDepth);
+		vw = elPx / scale;
+		vh = elPy / scale;
+		bound = (sLeaf < sDepth) ? 'leaf' : 'depth';
+	} else {
+		// Horizontal: legacy ROW_PX-per-leaf invariant — every leaf gets
+		// the same y-pixel budget, so tree_h_px = (k-1)·ROW_PX regardless
+		// of tip count.
+		scale = ROW_PX * (k - 1) / treeYExtent;
+		vh = elPy / scale;
+		vw = elPx / scale;
+		const treeDepthPx = treeXExtent * scale;
+		const dataPxNeed  = treeDepthPx + labelMarginPx + bracketGutterPx + marginPx * 2;
+		if (dataPxNeed > elPx) {
+			const factor = dataPxNeed / elPx;
+			vw *= factor;
+			vh *= factor;
+			bound = 'data';
+		}
 	}
 
-	const vx = minX - marginPx / scale;             // pixel pad → coord pad
-	const vy = minY - (vh - treeYExtent) / 2;       // centre tree vertically in vh
+	// Vertical pins the root (max-y) near the bottom of the viewBox so the
+	// tree grows upward; space above tips holds labels and brackets. On
+	// the LEAF axis (x), anchor the leftmost tip near the left edge with a
+	// small margin — labels project up-and-right, so the slack should sit
+	// on the right where the rightmost labels need it. Centring the tree
+	// instead wastes leaf-axis space on the left and clips the rightmost
+	// labels past the SVG edge.
+	let vx, vy;
+	if (IS_VERTICAL) {
+		vx = minX - marginPx / scale;
+		vy = maxY + marginPx / scale - vh;
+	} else {
+		vx = minX - marginPx / scale;
+		vy = minY - (vh - treeYExtent) / 2;
+	}
 
 	svg.setAttribute('viewBox', `${vx} ${vy} ${vw} ${vh}`);
 
@@ -1783,11 +2179,11 @@ function fitViewBox(scene) {
 	// navigations. bound='row' = row-driven (the stable case);
 	// bound='data' = labels forced expansion (shorter tree as fallback).
 	const finalScale = Math.min(elPx / vw, elPy / vh);
-	const treeHpx    = treeYExtent * finalScale;
-	const rowHpx     = treeHpx / (k - 1);
+	const leafPx     = (IS_VERTICAL ? treeXExtent : treeYExtent) * finalScale;
+	const rowHpx     = leafPx / (k - 1);
 	const fontPx     = STYLE.labelFontSize * finalScale;
 	console.log(
-		`[fit#2] k=${k} tips=${tipsNew} tree_h=${treeHpx.toFixed(0)}px ` +
+		`[fit#2] orient=${IS_VERTICAL ? 'v' : 'h'} k=${k} tips=${tipsNew} leaf=${leafPx.toFixed(0)}px ` +
 		`row=${rowHpx.toFixed(1)}px font≈${fontPx.toFixed(1)}px ` +
 		`svg=${elPx}×${elPy} win=${window.innerWidth}×${window.innerHeight} ` +
 		`vbox=${vw.toFixed(0)}×${vh.toFixed(0)} bound=${bound}`
