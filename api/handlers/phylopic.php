@@ -82,6 +82,7 @@ function _phylopic_resolve($ott_id)
 	$empty = array(
 		'image_uuid'    => null,
 		'thumbnail_url' => null,
+		'svg_url'       => null,
 		'contributor'   => null,
 		'license_url'   => null,
 	);
