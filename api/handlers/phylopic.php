@@ -25,7 +25,7 @@ function api_handle_phylopic(PDO $db, array $params)
 
 	$cutoff = date('Y-m-d H:i:s', strtotime('-' . PHYLOPIC_CACHE_DAYS . ' days'));
 	$cache_stmt = $db->prepare(
-		'SELECT ott_id, image_uuid, thumbnail_url, contributor, license_url
+		'SELECT ott_id, image_uuid, thumbnail_url, svg_url, contributor, license_url
 		 FROM phylopic_cache WHERE ott_id = ? AND fetched_at > ?'
 	);
 
@@ -44,8 +44,8 @@ function api_handle_phylopic(PDO $db, array $params)
 
 	$insert = $db->prepare(
 		'INSERT OR REPLACE INTO phylopic_cache
-		 (ott_id, image_uuid, thumbnail_url, contributor, license_url, fetched_at)
-		 VALUES (?, ?, ?, ?, ?, datetime("now"))'
+		 (ott_id, image_uuid, thumbnail_url, svg_url, contributor, license_url, fetched_at)
+		 VALUES (?, ?, ?, ?, ?, ?, datetime("now"))'
 	);
 
 	foreach ($uncached as $id) {
@@ -54,6 +54,7 @@ function api_handle_phylopic(PDO $db, array $params)
 			$id,
 			$data['image_uuid'],
 			$data['thumbnail_url'],
+			$data['svg_url'],
 			$data['contributor'],
 			$data['license_url'],
 		));
@@ -61,6 +62,7 @@ function api_handle_phylopic(PDO $db, array $params)
 			'ott_id'        => $id,
 			'image_uuid'    => $data['image_uuid'],
 			'thumbnail_url' => $data['thumbnail_url'],
+			'svg_url'       => $data['svg_url'],
 			'contributor'   => $data['contributor'],
 			'license_url'   => $data['license_url'],
 		);
@@ -70,7 +72,7 @@ function api_handle_phylopic(PDO $db, array $params)
 	foreach ($ids as $id) {
 		$out[] = $results[$id];
 	}
-	api_json(array('results' => $out));
+	api_json(array('results' => $out), 200, 3600);
 }
 
 function _phylopic_resolve($ott_id)
@@ -104,6 +106,8 @@ function _phylopic_resolve($ott_id)
 
 	$links = isset($img['_links']) ? $img['_links'] : array();
 
+	$svg_url = isset($links['vectorFile']['href']) ? $links['vectorFile']['href'] : null;
+
 	$thumb = null;
 	if (isset($links['thumbnailFiles']) && is_array($links['thumbnailFiles'])) {
 		foreach ($links['thumbnailFiles'] as $t) {
@@ -120,6 +124,7 @@ function _phylopic_resolve($ott_id)
 	return array(
 		'image_uuid'    => $img['uuid'] ?? null,
 		'thumbnail_url' => $thumb,
+		'svg_url'       => $svg_url,
 		'contributor'   => $links['contributor']['title'] ?? ($img['attribution'] ?? null),
 		'license_url'   => $links['license']['href'] ?? null,
 	);
