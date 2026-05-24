@@ -2,8 +2,10 @@
 
 require_once dirname(__FILE__) . '/../lib/response.php';
 
-const PHYLOPIC_RESOLVE = 'https://api.phylopic.org/resolve/opentreeoflife.org/taxonomy/';
+const PHYLOPIC_RESOLVE   = 'https://api.phylopic.org/resolve/opentreeoflife.org/taxonomy/';
+const PHYLOPIC_IMAGE_CDN = 'https://images.phylopic.org/images/';
 const PHYLOPIC_CACHE_DAYS = 30;
+define('PHYLOPIC_SVG_DIR', dirname(__FILE__) . '/../../cache/phylopic/');
 
 function api_handle_phylopic(PDO $db, array $params)
 {
@@ -128,4 +130,37 @@ function _phylopic_resolve($ott_id)
 		'contributor'   => $links['contributor']['title'] ?? ($img['attribution'] ?? null),
 		'license_url'   => $links['license']['href'] ?? null,
 	);
+}
+
+function api_handle_phylopic_svg($uuid)
+{
+	if (!preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/', $uuid))
+		api_error('bad_request', 'Invalid UUID.', null, 400);
+
+	$local = PHYLOPIC_SVG_DIR . $uuid . '.svg';
+
+	if (!file_exists($local)) {
+		$url = PHYLOPIC_IMAGE_CDN . $uuid . '/vector.svg';
+		$ch = curl_init($url);
+		curl_setopt_array($ch, array(
+			CURLOPT_RETURNTRANSFER => true,
+			CURLOPT_FOLLOWLOCATION => true,
+			CURLOPT_TIMEOUT        => 10,
+		));
+		$svg = curl_exec($ch);
+		$http = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+		curl_close($ch);
+
+		if ($http !== 200 || $svg === false)
+			api_error('not_found', 'SVG not available.', null, 404);
+
+		if (!is_dir(PHYLOPIC_SVG_DIR)) mkdir(PHYLOPIC_SVG_DIR, 0755, true);
+		file_put_contents($local, $svg);
+	}
+
+	header('Content-Type: image/svg+xml');
+	header('Cache-Control: public, max-age=2592000');
+	header('Access-Control-Allow-Origin: *');
+	readfile($local);
+	exit;
 }

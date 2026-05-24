@@ -99,7 +99,12 @@ try
 
 		case 'phylopic':
 			require_once dirname(__FILE__) . '/handlers/phylopic.php';
-			api_handle_phylopic($db, $_GET);
+			$sub = $segments[1] ?? null;
+			if ($sub === 'svg' && isset($segments[2])) {
+				api_handle_phylopic_svg($segments[2]);
+			} else {
+				api_handle_phylopic($db, $_GET);
+			}
 			break;
 
 		default:
