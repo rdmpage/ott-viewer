@@ -1564,16 +1564,14 @@ function render(scene) {
 				const ottNum = p.id.replace(/^ott/, '');
 				const cached = phylopicCache[ottNum];
 				if (cached && cached.image_uuid) {
-					const fo = document.createElementNS(NS, 'foreignObject');
-					fo.setAttribute('x', (p.range.min + p.range.max) / 2 - imgSizeV / 2);
-					fo.setAttribute('y', by - BRACKET_LABEL_GAP - STYLE.labelFontSize - imgSizeV);
-					fo.setAttribute('width', imgSizeV);
-					fo.setAttribute('height', imgSizeV);
-					const img = document.createElement('img');
-					img.src = PHYLOPIC_API + '/svg/' + cached.image_uuid;
-					img.className = 'bracket-phylopic';
-					fo.appendChild(img);
-					layer.appendChild(fo);
+					const img = document.createElementNS(NS, 'image');
+					img.setAttributeNS('http://www.w3.org/1999/xlink', 'href',
+						PHYLOPIC_API + '/svg/' + cached.image_uuid + '?v=2');
+					img.setAttribute('x', (p.range.min + p.range.max) / 2 - imgSizeV / 2);
+					img.setAttribute('y', by - BRACKET_LABEL_GAP - STYLE.labelFontSize - imgSizeV);
+					img.setAttribute('width', imgSizeV);
+					img.setAttribute('height', imgSizeV);
+					layer.appendChild(img);
 				}
 			});
 		} else {
@@ -1611,16 +1609,14 @@ function render(scene) {
 				const cached = phylopicCache[ottNum];
 				if (cached && cached.image_uuid) {
 					const labelW = (p.display || p.id).length * charW;
-					const fo = document.createElementNS(NS, 'foreignObject');
-					fo.setAttribute('x', bx + BRACKET_LABEL_GAP + labelW + BRACKET_LABEL_GAP);
-					fo.setAttribute('y', (p.range.min + p.range.max) / 2 - imgSize / 2);
-					fo.setAttribute('width', imgSize);
-					fo.setAttribute('height', imgSize);
-					const img = document.createElement('img');
-					img.src = PHYLOPIC_API + '/svg/' + cached.image_uuid;
-					img.className = 'bracket-phylopic';
-					fo.appendChild(img);
-					layer.appendChild(fo);
+					const img = document.createElementNS(NS, 'image');
+					img.setAttributeNS('http://www.w3.org/1999/xlink', 'href',
+						PHYLOPIC_API + '/svg/' + cached.image_uuid + '?v=2');
+					img.setAttribute('x', bx + BRACKET_LABEL_GAP + labelW + BRACKET_LABEL_GAP);
+					img.setAttribute('y', (p.range.min + p.range.max) / 2 - imgSize / 2);
+					img.setAttribute('width', imgSize);
+					img.setAttribute('height', imgSize);
+					layer.appendChild(img);
 				}
 			});
 		}
