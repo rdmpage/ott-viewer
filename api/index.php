@@ -97,6 +97,11 @@ try
 			api_handle_search($db, $_GET);
 			break;
 
+		case 'phylopic':
+			require_once dirname(__FILE__) . '/handlers/phylopic.php';
+			api_handle_phylopic($db, $_GET);
+			break;
+
 		default:
 			api_error('not_found', "No such resource: '$resource'.",
 				array('resource' => $resource, 'path' => $path), 404);

@@ -12,9 +12,10 @@ let t1 = null, t2 = null;
 let currentTree = null;
 let currentK    = 30;
 
-const TREE_API     = 'api/v1/tree';
-const HOPTREE_API  = 'api/v1/hoptree';
-const SEARCH_API   = 'api/v1/search';
+const TREE_API      = 'api/v1/tree';
+const HOPTREE_API   = 'api/v1/hoptree';
+const SEARCH_API    = 'api/v1/search';
+const PHYLOPIC_API  = 'api/v1/phylopic';
 
 // ─── Orientation (prototype) ────────────────────────────────────────────────
 // URL param `?orient=v` switches to bottom-to-top with 45°-rotated tip labels.
@@ -380,9 +381,7 @@ function afterNavigationLanded(tree) {
 
 	pushTrail(focal);
 	renderHoptree();
-	// The info panel is no longer auto-opened on navigation — it appears
-	// only when the user single-clicks a node, and persists until closed
-	// directly or until the next navigation hides it again.
+	loadBracketPhylopics();
 }
 
 // Soft cap on the navigation trail. The hoptree shows the spanning
@@ -1037,6 +1036,29 @@ const STYLE = {
 	annotSlotRightDx: 0,
 };
 
+// ─── PhyloPic silhouettes for bracket labels ────────────────────────────────
+const phylopicCache = {};
+
+async function loadBracketPhylopics() {
+	if (!bracketState || bracketState.placed.length === 0) return;
+	const ottIds = bracketState.placed
+		.map(p => p.id.replace(/^ott/, ''))
+		.filter(id => /^\d+$/.test(id) && !(id in phylopicCache));
+	if (ottIds.length === 0) return;
+	ottIds.forEach(id => { phylopicCache[id] = 'pending'; });
+	try {
+		const r = await fetch(PHYLOPIC_API + '?ott_ids=' + encodeURIComponent(ottIds.join(',')));
+		const data = await r.json();
+		(data.results || []).forEach(item => {
+			phylopicCache[item.ott_id] = item.thumbnail_url ? item : null;
+		});
+	} catch (e) {
+		ottIds.forEach(id => { delete phylopicCache[id]; });
+		return;
+	}
+	if (currentT >= BRACKET_REST_THRESHOLD) render(scene);
+}
+
 // ─── Internal-clade brackets ────────────────────────────────────────────────
 // Vertical bars to the right of the tip labels marking named multi-tip
 // internal clades. Greedy interval colouring picks which clades fit in the
@@ -1518,6 +1540,8 @@ function render(scene) {
 			if (!isFinite(labelTopMin)) labelTopMin = 0;
 			const trackBaseY = labelTopMin - BRACKET_GUTTER_PAD;
 
+			const imgSizeV = STYLE.labelFontSize * 2.5;
+
 			bracketState.placed.forEach(p => {
 				// Additional tracks stack upward (smaller y).
 				const by = trackBaseY - p.track * BRACKET_TRACK_W;
@@ -1535,6 +1559,19 @@ function render(scene) {
 				txt.setAttribute('text-anchor', 'middle');
 				txt.textContent = p.display || p.id;
 				layer.appendChild(txt);
+
+				const ottNum = p.id.replace(/^ott/, '');
+				const cached = phylopicCache[ottNum];
+				if (cached && cached.thumbnail_url) {
+					const img = document.createElementNS(NS, 'image');
+					img.setAttributeNS('http://www.w3.org/1999/xlink', 'href', cached.thumbnail_url);
+					img.setAttribute('x', (p.range.min + p.range.max) / 2 - imgSizeV / 2);
+					img.setAttribute('y', by - BRACKET_LABEL_GAP - STYLE.labelFontSize - imgSizeV);
+					img.setAttribute('width', imgSizeV);
+					img.setAttribute('height', imgSizeV);
+					img.setAttribute('class', 'bracket-phylopic');
+					layer.appendChild(img);
+				}
 			});
 		} else {
 			let labelEndMax = -Infinity;
@@ -1547,6 +1584,8 @@ function render(scene) {
 			});
 			if (!isFinite(labelEndMax)) labelEndMax = 0;
 			const trackBaseX = labelEndMax + BRACKET_GUTTER_PAD;
+
+			const imgSize = STYLE.labelFontSize * 2.5;
 
 			bracketState.placed.forEach(p => {
 				const bx = trackBaseX + p.track * BRACKET_TRACK_W;
@@ -1564,6 +1603,20 @@ function render(scene) {
 				txt.setAttribute('dominant-baseline', 'central');
 				txt.textContent = p.display || p.id;
 				layer.appendChild(txt);
+
+				const ottNum = p.id.replace(/^ott/, '');
+				const cached = phylopicCache[ottNum];
+				if (cached && cached.thumbnail_url) {
+					const labelW = (p.display || p.id).length * charW;
+					const img = document.createElementNS(NS, 'image');
+					img.setAttributeNS('http://www.w3.org/1999/xlink', 'href', cached.thumbnail_url);
+					img.setAttribute('x', bx + BRACKET_LABEL_GAP + labelW + BRACKET_LABEL_GAP);
+					img.setAttribute('y', (p.range.min + p.range.max) / 2 - imgSize / 2);
+					img.setAttribute('width', imgSize);
+					img.setAttribute('height', imgSize);
+					img.setAttribute('class', 'bracket-phylopic');
+					layer.appendChild(img);
+				}
 			});
 		}
 		svg.appendChild(layer);

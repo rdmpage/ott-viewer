@@ -37,6 +37,7 @@ End-to-end working pipeline (server → JSON → SVG):
 | `ott_tree.php`          | OTT-specific access to the local SQLite database (`ott.db`).                             |
 | `viewer.js`             | Client-side: scene building, interpolation, SVG rendering, peek overlay, history.        |
 | `viewer.css`            | Shared styles.                                                                           |
+| `import_studies.php`    | Populates the `studies` table from phylesystem JSON files.                               |
 | `tests/trees.php`       | Layer 1 schema + invariant tests against `tree.php`.                                     |
 
 `transition.html` is a separate two-tree demo page sharing the same `viewer.js` / `viewer.css`.
@@ -58,7 +59,7 @@ End-to-end working pipeline (server → JSON → SVG):
       "weight":         42,
       "x": 14.3, "y": 137.5,
       "annotations": {
-        "supported_by":    ["ot_123@tree1", ...],
+        "supported_by":    [{ "study_tree": "ot_123@tree1", "publication_ref": "...", "doi": "..." }, ...],
         "terminal":        [...],
         "resolves":        [...],
         "conflicts_with":  [...],
@@ -171,22 +172,57 @@ Intended to hold the OTT taxonomy (names, ranks, flags) as a supplement to the s
 | `rank` | TEXT | Taxonomic rank. |
 | `flags` | TEXT | OTT taxonomy flags. |
 
-### `studies` (unpopulated)
+### `studies`
 
-Intended to hold metadata for the phylogenetic studies referenced in `annotations`.
+Metadata for the phylogenetic studies referenced in `annotations`. Populated by `import_studies.php` from the [phylesystem](https://github.com/OpenTreeOfLife/phylesystem-1) JSON files.
 
 | Column | Type | Notes |
 |---|---|---|
 | `study_id` | TEXT PK | e.g. `ot_311`. |
 | `publication_ref` | TEXT | Bibliographic citation string. |
-| `doi` | TEXT | DOI. |
+| `doi` | TEXT | Bare DOI (no URL prefix). |
 | `year` | INTEGER | Publication year. |
 | `focal_clade_name` | TEXT | Focal clade of the study. |
 | `curator_names` | TEXT | JSON array of curator names. |
 
+### `phylopic_cache`
+
+Caches [PhyloPic](https://www.phylopic.org/) silhouette lookups so the viewer doesn't re-query the PhyloPic API for every page load. Populated automatically by the `/api/v1/phylopic` proxy endpoint. Negative results (no image for a taxon) are cached too, with `thumbnail_url = NULL`.
+
+| Column | Type | Notes |
+|---|---|---|
+| `ott_id` | TEXT PK | Bare OTT number (e.g. `746703`), no `ott` prefix. |
+| `image_uuid` | TEXT | PhyloPic image UUID, or NULL if no image exists. |
+| `thumbnail_url` | TEXT | Full URL to the 64×64 PNG thumbnail, or NULL. |
+| `contributor` | TEXT | Image contributor / attribution name. |
+| `license_url` | TEXT | License URL (typically CC0 or CC-BY). |
+| `fetched_at` | TEXT | ISO datetime of when the row was fetched; entries older than 30 days are re-queried. |
+
 ### Views
 
 - **`taxa_v`** — extends `taxa` with an `is_taxonomy_only` flag (1 when the node has no rows in `annotations`, i.e. placed by taxonomy alone with no phylogenetic support).
+
+## PhyloPic silhouettes
+
+Bracket labels for named clades display a [PhyloPic](https://www.phylopic.org/) silhouette when one is available. The lookup uses OTT identifiers (not taxon names) to avoid homonym ambiguity.
+
+### How it works
+
+1. After a tree loads, the client collects the OTT IDs of all bracketed clades and sends them in a single batch request to `/api/v1/phylopic?ott_ids=746703,541928,...`.
+2. The PHP proxy (`api/handlers/phylopic.php`) checks the `phylopic_cache` table in `ott.db`. Cached results (less than 30 days old) are returned immediately.
+3. For cache misses, the proxy calls the PhyloPic API: `GET https://api.phylopic.org/resolve/opentreeoflife.org/taxonomy/{ott_number}?embed_primaryImage=true`. This resolves the OTT ID to a PhyloPic node and returns the primary image in a single request.
+4. The proxy extracts the 64×64 thumbnail URL, contributor name, and license, stores them in `phylopic_cache`, and returns the result. Taxa with no PhyloPic image are cached with `thumbnail_url = NULL` to prevent repeated lookups.
+5. The client renders each thumbnail as an SVG `<image>` element to the right of the bracket label. Images that haven't loaded yet are simply absent — the bracket and label render immediately without waiting.
+
+### Caching layers
+
+- **Server (SQLite)**: `phylopic_cache` table. Persists across sessions. 30-day TTL. Negative results cached.
+- **Client (in-memory)**: JavaScript object keyed by OTT number. Lives for the browser session. Prevents redundant proxy calls when navigating between nodes.
+- **Browser HTTP cache**: The 64×64 PNGs from `images.phylopic.org` are subject to standard browser caching (PhyloPic serves `Cache-Control` headers).
+
+### Dark mode
+
+PhyloPic thumbnails are black silhouettes on a transparent background. In dark mode, CSS `filter: invert(1)` flips them to white.
 
 ## Design notes
 
