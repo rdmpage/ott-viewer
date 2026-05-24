@@ -154,6 +154,11 @@ function api_handle_phylopic_svg($uuid)
 		if ($http !== 200 || $svg === false)
 			api_error('not_found', 'SVG not available.', null, 404);
 
+		// Strip width/height attributes so the SVG scales to its container;
+		// the viewBox alone controls the aspect ratio.
+		$svg = preg_replace('/(<svg\b[^>]*?)\s+width="[^"]*"/', '$1', $svg);
+		$svg = preg_replace('/(<svg\b[^>]*?)\s+height="[^"]*"/', '$1', $svg);
+
 		if (!is_dir(PHYLOPIC_SVG_DIR)) mkdir(PHYLOPIC_SVG_DIR, 0755, true);
 		file_put_contents($local, $svg);
 	}
