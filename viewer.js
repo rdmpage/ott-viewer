@@ -975,6 +975,21 @@ function updateScene(scene, t) {
 const svg = document.getElementById('canvas');
 const NS = 'http://www.w3.org/2000/svg';
 
+// SVG filter that tints any image to mid-gray (#808080), preserving alpha.
+// Equivalent to CSS brightness(0) invert(0.5) but works in Safari which
+// doesn't apply CSS filters to SVG <image> elements.
+(function () {
+	const defs = document.createElementNS(NS, 'defs');
+	const filter = document.createElementNS(NS, 'filter');
+	filter.setAttribute('id', 'phylopic-gray');
+	const matrix = document.createElementNS(NS, 'feColorMatrix');
+	matrix.setAttribute('type', 'matrix');
+	matrix.setAttribute('values', '0 0 0 0 0.5  0 0 0 0 0.5  0 0 0 0 0.5  0 0 0 1 0');
+	filter.appendChild(matrix);
+	defs.appendChild(filter);
+	svg.appendChild(defs);
+})();
+
 // ─── Layout invariants (issue #2) ───────────────────────────────────────────
 // Font is rendered at a constant pixel size and each leaf gets a constant
 // vertical pixel budget (one row). The leaf budget k is then DERIVED from
@@ -1570,6 +1585,7 @@ function render(scene) {
 					img.setAttribute('width', imgSizeV);
 					img.setAttribute('height', imgSizeV);
 					img.setAttribute('class', 'bracket-phylopic');
+					img.setAttribute('filter', 'url(#phylopic-gray)');
 					layer.appendChild(img);
 				}
 			});
@@ -1615,6 +1631,7 @@ function render(scene) {
 					img.setAttribute('width', imgSize);
 					img.setAttribute('height', imgSize);
 					img.setAttribute('class', 'bracket-phylopic');
+					img.setAttribute('filter', 'url(#phylopic-gray)');
 					layer.appendChild(img);
 				}
 			});
