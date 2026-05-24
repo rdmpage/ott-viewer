@@ -194,6 +194,7 @@ async function replaceTree(taxon, addToHistory) {
 	t1 = newTree;
 	t2 = newTree;               // degenerate transition: just renders newTree
 	init();
+	setT(1);                    // jump to rest so brackets render immediately
 	afterNavigationLanded(newTree);
 }
 
@@ -1153,6 +1154,39 @@ function computeBracketState(tree, scene) {
 		return (n.tip_count | 0) >= BRACKET_MIN_TIPS;
 	});
 
+	// --- Maximum disjoint set (earliest-right-endpoint) -----------------
+	// Classic interval scheduling maximisation: sort by right endpoint,
+	// greedily pick the next non-overlapping interval. Maximises the
+	// *count* of placed brackets on a single track.
+	//
+	// Original priority-sort + multi-track colouring is preserved below
+	// (commented out) in case we want to switch back.
+
+	// Annotate each candidate with its y-range for sorting.
+	const intervals = candidates.map(c => {
+		const r = yRanges[c.id];
+		return { c, min: r.min, max: r.max };
+	});
+
+	// Sort by right endpoint (max); ties broken by earlier left endpoint
+	// (prefer tighter intervals).
+	intervals.sort((a, b) => a.max - b.max || a.min - b.min);
+
+	const placed  = [];
+	const dropped = [];
+	let lastMax = -Infinity;
+	intervals.forEach(iv => {
+		if (iv.min > lastMax) {
+			placed.push({ id: iv.c.id, display: iv.c.display, track: 0,
+			              range: { min: iv.min, max: iv.max } });
+			lastMax = iv.max;
+		} else {
+			dropped.push({ id: iv.c.id, display: iv.c.display,
+			               range: { min: iv.min, max: iv.max } });
+		}
+	});
+
+	/* --- Original priority-sort + multi-track colouring ----------------
 	candidates.sort((a, b) => {
 		const da = a.depth | 0, db = b.depth | 0;
 		if (BRACKET_SORT === 'depth-asc')  return da - db;
@@ -1162,7 +1196,6 @@ function computeBracketState(tree, scene) {
 		return 0;
 	});
 
-	// Greedy interval colouring: leftmost track that doesn't overlap.
 	const tracks  = [];
 	const placed  = [];
 	const dropped = [];
@@ -1189,8 +1222,9 @@ function computeBracketState(tree, scene) {
 			dropped.push({ id: c.id, display: c.display, range: r });
 		}
 	});
+	--- end original -------------------------------------------------- */
 
-	return { placed, dropped, trackCount: tracks.length };
+	return { placed, dropped, trackCount: placed.length > 0 ? 1 : 0 };
 }
 
 function render(scene) {

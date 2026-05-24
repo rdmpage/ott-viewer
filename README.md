@@ -120,6 +120,74 @@ Runs `tree.php` against a battery of focal taxa (mid-tree clades, the OTT root w
 
 - Layer 2 browser smoke tests (Playwright) — load `index.php` for a matrix of taxa, assert no console errors after click-around. Skip pixel-diff goldens (too flaky).
 
+## Database schema (`ott.db`)
+
+SQLite database with nested-set encoding of the OTT synthesis tree, taxon metadata, and per-node phylogenetic annotations.
+
+### `taxa`
+
+Every node in the synthesis tree (internal and leaf).
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | INTEGER PK | Internal row id, used as FK in `tree`. |
+| `external_id` | TEXT UNIQUE | Stable OTT identifier: `ottN` for named taxa, `mrcaottXottY` for unnamed internal nodes. |
+| `label` | TEXT | Human-readable name (species/clade name, or the raw mrca string for unnamed nodes). |
+
+### `tree`
+
+Nested-set tree structure. One row per node, keyed to `taxa.id`.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | INTEGER PK/FK | References `taxa.id`. |
+| `parent` | INTEGER FK | Parent node (`taxa.id`). The root's parent is itself. |
+| `depth` | INTEGER | Depth from root (root = 0). |
+| `weight` | INTEGER | Descendant-tip count; drives priority-queue expansion in the summary engine. |
+| `nleft` | INTEGER | Nested-set left bound. |
+| `nright` | INTEGER | Nested-set right bound. |
+| `score` | REAL | Pre-computed ranking score (currently equal to weight). |
+
+### `annotations`
+
+Per-node phylogenetic-study support from the OTT synthesis provenance data.
+
+| Column | Type | Notes |
+|---|---|---|
+| `node_external_id` | TEXT FK | Joins to `taxa.external_id`. |
+| `relation` | TEXT | One of `supported_by`, `conflicts_with`, `partial_path_of`, `terminal`, `was_uncontested`. |
+| `study_tree` | TEXT | Study-tree reference, e.g. `ot_311@tree1`. |
+| `source_node_id` | TEXT | Node id within the source study tree. |
+
+### `taxonomy` (unpopulated)
+
+Intended to hold the OTT taxonomy (names, ranks, flags) as a supplement to the synthesis-tree-only data in `taxa`/`tree`.
+
+| Column | Type | Notes |
+|---|---|---|
+| `ott_id` | TEXT PK | OTT identifier. |
+| `parent_ott_id` | TEXT | Parent taxon. |
+| `name` | TEXT | Taxon name. |
+| `rank` | TEXT | Taxonomic rank. |
+| `flags` | TEXT | OTT taxonomy flags. |
+
+### `studies` (unpopulated)
+
+Intended to hold metadata for the phylogenetic studies referenced in `annotations`.
+
+| Column | Type | Notes |
+|---|---|---|
+| `study_id` | TEXT PK | e.g. `ot_311`. |
+| `publication_ref` | TEXT | Bibliographic citation string. |
+| `doi` | TEXT | DOI. |
+| `year` | INTEGER | Publication year. |
+| `focal_clade_name` | TEXT | Focal clade of the study. |
+| `curator_names` | TEXT | JSON array of curator names. |
+
+### Views
+
+- **`taxa_v`** — extends `taxa` with an `is_taxonomy_only` flag (1 when the node has no rows in `annotations`, i.e. placed by taxonomy alone with no phylogenetic support).
+
 ## Design notes
 
 - `viewer-pipeline-design.md` — JSON schema, transition endpoint, gotchas, deferred items.
