@@ -501,10 +501,7 @@ input[type=range] { width: 300px; vertical-align: middle; }
    "annotations" layered over the tree, distinct from the tip text. */
 .bracket-line   { stroke: var(--text-link); fill: none; }
 .bracket-label  { fill: var(--text-link); font-weight: 600; }
-.bracket-phylopic { opacity: 0.85; pointer-events: none; }
-@media (prefers-color-scheme: dark) {
-  .bracket-phylopic { filter: invert(1); }
-}
+.bracket-phylopic { pointer-events: none; filter: brightness(0) invert(0.5); }
 
 /* In-flight tree fetch indicator: a centred spinning ring while a request
    is on the wire. Toggled via body.loading. Translucent track so the tree
