@@ -975,20 +975,6 @@ function updateScene(scene, t) {
 const svg = document.getElementById('canvas');
 const NS = 'http://www.w3.org/2000/svg';
 
-// SVG filter that tints any image to mid-gray (#808080), preserving alpha.
-// Applied via the SVG filter attribute (not CSS) so it works in Safari.
-// Images are served through our own proxy so there are no cross-origin issues.
-(function () {
-	const defs = document.createElementNS(NS, 'defs');
-	const filter = document.createElementNS(NS, 'filter');
-	filter.setAttribute('id', 'phylopic-gray');
-	const matrix = document.createElementNS(NS, 'feColorMatrix');
-	matrix.setAttribute('type', 'matrix');
-	matrix.setAttribute('values', '0 0 0 0 0.5  0 0 0 0 0.5  0 0 0 0 0.5  0 0 0 1 0');
-	filter.appendChild(matrix);
-	defs.appendChild(filter);
-	svg.appendChild(defs);
-})();
 
 // ─── Layout invariants (issue #2) ───────────────────────────────────────────
 // Font is rendered at a constant pixel size and each leaf gets a constant
@@ -1578,16 +1564,16 @@ function render(scene) {
 				const ottNum = p.id.replace(/^ott/, '');
 				const cached = phylopicCache[ottNum];
 				if (cached && cached.image_uuid) {
-					const img = document.createElementNS(NS, 'image');
-					img.setAttributeNS('http://www.w3.org/1999/xlink', 'href',
-						PHYLOPIC_API + '/svg/' + cached.image_uuid);
-					img.setAttribute('x', (p.range.min + p.range.max) / 2 - imgSizeV / 2);
-					img.setAttribute('y', by - BRACKET_LABEL_GAP - STYLE.labelFontSize - imgSizeV);
-					img.setAttribute('width', imgSizeV);
-					img.setAttribute('height', imgSizeV);
-					img.setAttribute('class', 'bracket-phylopic');
-					img.setAttribute('filter', 'url(#phylopic-gray)');
-					layer.appendChild(img);
+					const fo = document.createElementNS(NS, 'foreignObject');
+					fo.setAttribute('x', (p.range.min + p.range.max) / 2 - imgSizeV / 2);
+					fo.setAttribute('y', by - BRACKET_LABEL_GAP - STYLE.labelFontSize - imgSizeV);
+					fo.setAttribute('width', imgSizeV);
+					fo.setAttribute('height', imgSizeV);
+					const img = document.createElement('img');
+					img.src = PHYLOPIC_API + '/svg/' + cached.image_uuid;
+					img.className = 'bracket-phylopic';
+					fo.appendChild(img);
+					layer.appendChild(fo);
 				}
 			});
 		} else {
@@ -1625,16 +1611,16 @@ function render(scene) {
 				const cached = phylopicCache[ottNum];
 				if (cached && cached.image_uuid) {
 					const labelW = (p.display || p.id).length * charW;
-					const img = document.createElementNS(NS, 'image');
-					img.setAttributeNS('http://www.w3.org/1999/xlink', 'href',
-						PHYLOPIC_API + '/svg/' + cached.image_uuid);
-					img.setAttribute('x', bx + BRACKET_LABEL_GAP + labelW + BRACKET_LABEL_GAP);
-					img.setAttribute('y', (p.range.min + p.range.max) / 2 - imgSize / 2);
-					img.setAttribute('width', imgSize);
-					img.setAttribute('height', imgSize);
-					img.setAttribute('class', 'bracket-phylopic');
-					img.setAttribute('filter', 'url(#phylopic-gray)');
-					layer.appendChild(img);
+					const fo = document.createElementNS(NS, 'foreignObject');
+					fo.setAttribute('x', bx + BRACKET_LABEL_GAP + labelW + BRACKET_LABEL_GAP);
+					fo.setAttribute('y', (p.range.min + p.range.max) / 2 - imgSize / 2);
+					fo.setAttribute('width', imgSize);
+					fo.setAttribute('height', imgSize);
+					const img = document.createElement('img');
+					img.src = PHYLOPIC_API + '/svg/' + cached.image_uuid;
+					img.className = 'bracket-phylopic';
+					fo.appendChild(img);
+					layer.appendChild(fo);
 				}
 			});
 		}
