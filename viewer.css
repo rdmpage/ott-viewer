@@ -366,14 +366,20 @@ svg {
 /* Per-relation annotation sections (supported_by, conflicts_with, …).
    Each section is a <details> so the user can collapse long lists. */
 .annotations           { margin-top: 0.7em; border-top: 1px solid var(--border); padding-top: 0.5em; }
-.ann-section           { margin: 0.25em 0; }
-.ann-section > summary { cursor: pointer; color: var(--text); user-select: none; padding: 0.1em 0; }
-.ann-section > summary:hover { color: var(--text-link); }
-.ann-list              { list-style: none; padding: 0.2em 0 0.3em 1em; margin: 0; font-size: 0.9em; }
-.ann-list li           { padding: 0.05em 0; }
+.ann-heading           { margin: 0.6em 0 0.15em; font-size: 0.9em; font-weight: 600; color: var(--text); }
+.ann-heading:first-child { margin-top: 0.2em; }
+.ann-list              { list-style: none; padding: 0 0 0.1em 0.5em; margin: 0; font-size: 0.9em; }
+.ann-list li           { padding: 0.1em 0; }
 .ann-list a            { color: var(--text-link); }
 .ann-list .tree-id     { color: var(--text-dim); margin-left: 0.3em; font-size: 0.9em; }
 .ann-empty             { color: var(--text-dim); font-style: italic; font-size: 0.9em; margin: 0.5em 0; }
+.study-details         { display: inline; }
+.study-details > summary { cursor: pointer; }
+.study-ref             { margin: 0.3em 0 0.15em; color: var(--text); font-size: 0.85em; line-height: 1.35; }
+.study-doi             { margin: 0.1em 0 0.3em; font-size: 0.85em; }
+.study-doi a           { color: var(--text-link); }
+.study-link            { margin: 0.15em 0 0.3em; font-size: 0.85em; }
+.study-link a          { color: var(--text-link); }
 
 #main {
 	flex: 1 1 0;

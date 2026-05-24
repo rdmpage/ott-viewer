@@ -56,7 +56,12 @@ function build_tree_payload(PDO $db, $taxon, $k)
 	// study_tree appears once per relation. Returns the full set of keys
 	// even when empty so the schema is uniform across nodes.
 	$ann_stmt = $db->prepare(
-		'SELECT DISTINCT relation, study_tree FROM annotations WHERE node_external_id = ?'
+		"SELECT DISTINCT a.relation, a.study_tree,
+		        s.publication_ref, s.doi
+		 FROM annotations a
+		 LEFT JOIN studies s
+		   ON s.study_id = substr(a.study_tree, 1, instr(a.study_tree, '@') - 1)
+		 WHERE a.node_external_id = ?"
 	);
 	$fetch_annotations = function ($external_id) use ($ann_stmt) {
 		$out = array(
@@ -69,7 +74,12 @@ function build_tree_payload(PDO $db, $taxon, $k)
 		$ann_stmt->execute(array($external_id));
 		while ($row = $ann_stmt->fetch(PDO::FETCH_ASSOC))
 		{
-			if (isset($out[$row['relation']])) $out[$row['relation']][] = $row['study_tree'];
+			if (!isset($out[$row['relation']])) continue;
+			$out[$row['relation']][] = array(
+				'study_tree'      => $row['study_tree'],
+				'publication_ref' => $row['publication_ref'],
+				'doi'             => $row['doi'],
+			);
 		}
 		return $out;
 	};

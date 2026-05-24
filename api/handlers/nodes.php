@@ -201,12 +201,22 @@ function _node_annotations(PDO $db, $external_id)
 		'partial_path_of' => array(),
 	);
 	$stmt = $db->prepare(
-		'SELECT DISTINCT relation, study_tree FROM annotations WHERE node_external_id = ?'
+		"SELECT DISTINCT a.relation, a.study_tree,
+		        s.publication_ref, s.doi
+		 FROM annotations a
+		 LEFT JOIN studies s
+		   ON s.study_id = substr(a.study_tree, 1, instr(a.study_tree, '@') - 1)
+		 WHERE a.node_external_id = ?"
 	);
 	$stmt->execute(array($external_id));
 	while ($row = $stmt->fetch(PDO::FETCH_ASSOC))
 	{
-		if (isset($out[$row['relation']])) $out[$row['relation']][] = $row['study_tree'];
+		if (!isset($out[$row['relation']])) continue;
+		$entry = new stdClass;
+		$entry->study_tree      = $row['study_tree'];
+		$entry->publication_ref = $row['publication_ref'];
+		$entry->doi             = $row['doi'];
+		$out[$row['relation']][] = $entry;
 	}
 	return (object)$out;
 }

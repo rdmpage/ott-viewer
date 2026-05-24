@@ -656,14 +656,14 @@ function renderAnnotations(ann) {
 		const list = ann[key];
 		if (!Array.isArray(list) || list.length === 0) return;
 		const distinct = new Set();
-		list.forEach(t => distinct.add(String(t).split('@')[0]));
-		const openByDefault = (key === 'supported_by' || key === 'conflicts_with');
+		list.forEach(t => {
+			const st = typeof t === 'object' ? t.study_tree : String(t);
+			distinct.add(st.split('@')[0]);
+		});
 		const items = list.map(renderStudyTree).join('');
 		sections.push(
-			'<details class="ann-section"' + (openByDefault ? ' open' : '') + '>' +
-				'<summary>' + escapeHtml(label) + ' (' + distinct.size + ')</summary>' +
-				'<ul class="ann-list">' + items + '</ul>' +
-			'</details>'
+			'<h4 class="ann-heading">' + escapeHtml(label) + ' (' + distinct.size + ')</h4>' +
+			'<ul class="ann-list">' + items + '</ul>'
 		);
 	});
 
@@ -673,17 +673,26 @@ function renderAnnotations(ann) {
 	return '<div class="annotations">' + sections.join('') + '</div>';
 }
 
-// Render one study_tree id ("ot_123@tree4") as a list item linking to the
-// study's page on tree.opentreeoflife.org. The "@treeN" suffix is shown as
-// a small dimmed tag so the user can tell which tree within the study.
 function renderStudyTree(studyTree) {
-	const s   = String(studyTree);
+	const isObj = typeof studyTree === 'object' && studyTree !== null;
+	const s   = isObj ? studyTree.study_tree : String(studyTree);
 	const at  = s.indexOf('@');
 	const sid = at > 0 ? s.slice(0, at) : s;
 	const tid = at > 0 ? s.slice(at + 1) : '';
 	const url = 'https://tree.opentreeoflife.org/curator/study/view/' + encodeURIComponent(sid);
 	const treeTag = tid ? ' <span class="tree-id">' + escapeHtml(tid) + '</span>' : '';
-	return '<li><a href="' + url + '" target="_blank" rel="noopener">' + escapeHtml(sid) + '</a>' + treeTag + '</li>';
+	const summaryText = escapeHtml(sid) + treeTag;
+
+	const pubRef = isObj ? studyTree.publication_ref : null;
+	const doi    = isObj ? studyTree.doi : null;
+	if (!pubRef && !doi) return '<li>' + summaryText + '</li>';
+
+	let body = '';
+	if (pubRef) body += '<p class="study-ref">' + escapeHtml(pubRef) + '</p>';
+	if (doi)    body += '<p class="study-doi"><a href="https://doi.org/' + encodeURIComponent(doi) + '" target="_blank" rel="noopener">' + escapeHtml(doi) + '</a></p>';
+	body += '<p class="study-link"><a href="' + url + '" target="_blank" rel="noopener">view on Open Tree of Life</a></p>';
+
+	return '<li><details class="study-details"><summary>' + summaryText + '</summary>' + body + '</details></li>';
 }
 
 function escapeHtml(s) {
@@ -1056,7 +1065,10 @@ function nodeAnnotation(n) {
 	if (!n || !n.annotations) return null;
 	const distinct = list => {
 		const s = new Set();
-		(list || []).forEach(t => s.add(t.split('@')[0]));
+		(list || []).forEach(t => {
+			const st = typeof t === 'object' ? t.study_tree : String(t);
+			s.add(st.split('@')[0]);
+		});
 		return s.size;
 	};
 	const supported = distinct(n.annotations.supported_by);
