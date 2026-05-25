@@ -313,13 +313,17 @@ function tool_sister(TreeQueries $q, $args)
 {
 	$ext = $q->resolve_name($args['taxon'] ?? '');
 	if (!$ext) return 'Taxon not found: ' . ($args['taxon'] ?? '');
-	$sisters = $q->sister_of($ext);
-	if ($sisters === null) return 'Taxon not found in tree.';
-	if (empty($sisters)) return 'Root node has no sister group.';
+	$result = $q->sister_of($ext);
+	if ($result === null) return 'Taxon not found in tree.';
+	if (empty($result['sisters'])) return 'Root node has no sister group.';
 	$rows = $q->lookup_external(array($ext));
 	$lines = array('Taxon: ' . _fmt($rows[0], $q));
-	$lines[] = 'Sister group' . (count($sisters) > 1 ? 's' : '') . ':';
-	foreach ($sisters as $s) $lines[] = '  ' . _fmt($s, $q);
+	if ($result['climbed_to']) {
+		$lines[] = 'Note: climbed through monotypic ancestors to ' . $q->ott->prettify_label($result['climbed_to']['label'])
+			. ' (' . $result['climbed_to']['external_id'] . ')';
+	}
+	$lines[] = 'Sister group' . (count($result['sisters']) > 1 ? 's' : '') . ':';
+	foreach ($result['sisters'] as $s) $lines[] = '  ' . _fmt($s, $q);
 	return implode("\n", $lines);
 }
 
@@ -382,11 +386,14 @@ function tool_node(TreeQueries $q, PDO $db, $args)
 		if ($p) $lines[] = 'Parent: ' . $q->ott->prettify_label($p['label']) . ' (' . $p['external_id'] . ')';
 	}
 
-	$sisters = $q->sister_of($ext);
-	if ($sisters && !empty($sisters)) {
+	$sis_result = $q->sister_of($ext);
+	if ($sis_result && !empty($sis_result['sisters'])) {
+		if ($sis_result['climbed_to']) {
+			$lines[] = '(climbed through monotypic ancestors to ' . $q->ott->prettify_label($sis_result['climbed_to']['label']) . ')';
+		}
 		$lines[] = 'Sister: ' . implode(', ', array_map(function ($s) use ($q) {
 			return $q->ott->prettify_label($s['label']);
-		}, $sisters));
+		}, $sis_result['sisters']));
 	}
 
 	$ann_stmt = $db->prepare(

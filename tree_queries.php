@@ -251,22 +251,66 @@ class TreeQueries
 
 	// ── Sister group ────────────────────────────────────────────────
 
-	// Returns the sister group(s) of a node — the other children of
-	// its parent. Returns an array of rows (same shape as lookup_external).
-	// For a bifurcating tree this is a single node; at a polytomy it
-	// may be multiple.
+	// Returns the sister group(s) of a node. If the immediate parent
+	// is monotypic (single child), walks up through monotypic ancestors
+	// until a branching node is found. Returns an associative array:
+	//   'sisters'    => array of rows (same shape as lookup_external)
+	//   'climbed_to' => row of the ancestor we climbed to (null if none)
+	// For backward compatibility, also works when called in a context
+	// that just iterates the result (returns the array above, not a
+	// flat list).
 	function sister_of($ext_id)
 	{
 		$rows = $this->lookup_external(array($ext_id));
 		if (empty($rows)) return null;
 		$node = $rows[0];
-		$parent_id = $node['parent'];
-		if ($parent_id === $node['id']) return array(); // root has no sister
 
-		$children = $this->children_of_internal($parent_id);
-		return array_values(array_filter($children, function ($c) use ($node) {
-			return $c['id'] !== $node['id'];
-		}));
+		$climbed_to = null;
+		$max_climb = 50;
+		while ($max_climb-- > 0) {
+			$parent_id = $node['parent'];
+			if ($parent_id === $node['id']) {
+				return array('sisters' => array(), 'climbed_to' => $climbed_to);
+			}
+
+			$children = $this->children_of_internal($parent_id);
+			$siblings = array_values(array_filter($children, function ($c) use ($node) {
+				return $c['id'] !== $node['id'];
+			}));
+
+			if (!empty($siblings)) {
+				return array('sisters' => $siblings, 'climbed_to' => $climbed_to);
+			}
+
+			// Parent is monotypic — climb up.
+			$parent_row = $this->_lookup_internal($parent_id);
+			if (!$parent_row) break;
+			$climbed_to = $parent_row;
+			$node = $parent_row;
+		}
+
+		return array('sisters' => array(), 'climbed_to' => $climbed_to);
+	}
+
+	// Fetch a single node by internal id.
+	function _lookup_internal($internal_id)
+	{
+		$stmt = $this->db->prepare(
+			'SELECT t.id,
+			        ta.external_id,
+			        ta.label,
+			        CAST(t.depth  AS INTEGER) AS depth,
+			        CAST(t.nleft  AS INTEGER) AS nleft,
+			        CAST(t.nright AS INTEGER) AS nright,
+			        CAST(t.weight AS INTEGER) AS weight,
+			        t.parent
+			 FROM tree t
+			 INNER JOIN taxa ta USING(id)
+			 WHERE t.id = ?'
+		);
+		$stmt->execute(array($internal_id));
+		$row = $stmt->fetch(PDO::FETCH_ASSOC);
+		return $row ? $row : null;
 	}
 
 	// ── Monophyly test ──────────────────────────────────────────────

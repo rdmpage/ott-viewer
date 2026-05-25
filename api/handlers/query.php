@@ -148,8 +148,8 @@ function _op_sister(TreeQueries $q, $params)
 	$r = _query_require_names($q, $params, 'taxon', 1);
 	$ext = $r['resolved'][0];
 
-	$sisters = $q->sister_of($ext);
-	if ($sisters === null)
+	$result = $q->sister_of($ext);
+	if ($result === null)
 		api_error('node_not_found', 'Taxon not found.', null, 404);
 
 	$rows = $q->lookup_external(array($ext));
@@ -160,7 +160,13 @@ function _op_sister(TreeQueries $q, $params)
 		'taxon'   => $focal,
 		'sisters' => array(),
 	);
-	foreach ($sisters as $s) $out['sisters'][] = _format_node($s, $q);
+	foreach ($result['sisters'] as $s) $out['sisters'][] = _format_node($s, $q);
+	if ($result['climbed_to']) {
+		$out['climbed_to'] = array(
+			'id'      => $result['climbed_to']['external_id'],
+			'display' => $q->ott->prettify_label($result['climbed_to']['label']),
+		);
+	}
 
 	api_json($out);
 }
@@ -268,10 +274,16 @@ function _op_node(TreeQueries $q, PDO $db, $params)
 	$out['annotations'] = $annotations;
 
 	// Sister group.
-	$sisters = $q->sister_of($ext);
+	$sis_result = $q->sister_of($ext);
 	$out['sisters'] = array();
-	if ($sisters) {
-		foreach ($sisters as $s) $out['sisters'][] = _format_node($s, $q);
+	if ($sis_result) {
+		foreach ($sis_result['sisters'] as $s) $out['sisters'][] = _format_node($s, $q);
+		if ($sis_result['climbed_to']) {
+			$out['sister_climbed_to'] = array(
+				'id'      => $sis_result['climbed_to']['external_id'],
+				'display' => $q->ott->prettify_label($sis_result['climbed_to']['label']),
+			);
+		}
 	}
 
 	// Parent.
