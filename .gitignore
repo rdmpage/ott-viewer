@@ -3,3 +3,5 @@ ott.db
 .DS_Store
 *.bbprojectd/
 /reading/ignore/
+ott.db-shm
+ott.db-wal
