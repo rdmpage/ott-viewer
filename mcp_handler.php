@@ -207,16 +207,19 @@ function getToolDefinitions()
 		),
 		array(
 			'name'        => 'study_info',
-			'description' => 'Look up a phylogenetic study that contributes to the synthesis tree. Accepts a DOI (e.g. "10.1126/science.1211028") or an Open Tree study ID (e.g. "pg_1428"). Returns the publication details, which trees from the study are used, and which nodes each tree supports, conflicts with, or resolves.',
+			'description' => 'Look up a phylogenetic study that contributes to the synthesis tree. Returns the publication details, which trees from the study are used, and which nodes each tree supports, conflicts with, or resolves. Provide either study_id or doi.',
 			'inputSchema' => array(
 				'type'       => 'object',
 				'properties' => array(
-					'study' => array(
+					'study_id' => array(
 						'type'        => 'string',
-						'description' => 'DOI or Open Tree study ID.',
+						'description' => 'Open Tree study ID, e.g. "ot_1278" or "pg_1428".',
+					),
+					'doi' => array(
+						'type'        => 'string',
+						'description' => 'DOI of the publication, e.g. "10.1126/science.1211028".',
 					),
 				),
-				'required' => array('study'),
 			),
 		),
 	);
@@ -420,14 +423,12 @@ function tool_node(TreeQueries $q, PDO $db, $args)
 
 function tool_study(TreeQueries $q, PDO $db, $args)
 {
-	$input = trim($args['study'] ?? '');
-	if ($input === '') return 'Provide a DOI or study ID.';
+	$study_id = trim($args['study_id'] ?? '');
+	$doi      = trim($args['doi'] ?? '');
+	if ($study_id === '' && $doi === '') return 'Provide study_id or doi.';
 
-	$study_id = null;
-	if (preg_match('/^(ot|pg)_\d+$/', $input)) {
-		$study_id = $input;
-	} else {
-		$doi = preg_replace('#^https?://(dx\.)?doi\.org/#', '', $input);
+	if ($study_id === '' && $doi !== '') {
+		$doi = preg_replace('#^https?://(dx\.)?doi\.org/#', '', $doi);
 		$stmt = $db->prepare('SELECT study_id FROM studies WHERE doi = ?');
 		$stmt->execute(array($doi));
 		$row = $stmt->fetch(PDO::FETCH_ASSOC);

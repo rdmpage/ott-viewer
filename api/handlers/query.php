@@ -305,11 +305,11 @@ const STUDY_NODE_CAP = 50;
 
 function _op_study(TreeQueries $q, PDO $db, $params)
 {
-	$study_id = isset($params['study']) ? trim((string)$params['study']) : '';
-	$doi      = isset($params['doi'])   ? trim((string)$params['doi'])   : '';
+	$study_id = isset($params['study_id']) ? trim((string)$params['study_id']) : '';
+	$doi      = isset($params['doi'])      ? trim((string)$params['doi'])      : '';
 
 	if ($study_id === '' && $doi === '')
-		api_error('bad_request', 'Provide `study` (e.g. ot_1278) or `doi` (e.g. 10.1126/science.1211028).', null, 400);
+		api_error('bad_request', 'Provide `study_id` (e.g. ot_1278) or `doi` (e.g. 10.1126/science.1211028).', null, 400);
 
 	// Resolve DOI to study_id if needed.
 	if ($study_id === '' && $doi !== '') {
