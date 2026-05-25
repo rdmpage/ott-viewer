@@ -107,6 +107,333 @@ class TreeQueries
 		return 'cousin';
 	}
 
+	// ── Name resolution ──────────────────────────────────────────────
+
+	// Resolve a taxon name to an external_id. Returns the first match
+	// or NULL. Accepts names like "Anolis carolinensis" or OTT ids
+	// like "ott746703" (passed through unchanged).
+	function resolve_name($name)
+	{
+		$name = trim($name);
+		if ($name === '') return null;
+		if (preg_match('/^ott\d+$/', $name)) return $name;
+		if (preg_match('/^\d+$/', $name)) return 'ott' . $name;
+
+		$stmt = $this->db->prepare(
+			'SELECT ta.external_id
+			 FROM taxa ta
+			 WHERE ta.label = ?
+			 LIMIT 1'
+		);
+		$stmt->execute(array($name));
+		$row = $stmt->fetch(PDO::FETCH_ASSOC);
+		return $row ? $row['external_id'] : null;
+	}
+
+	// Resolve a list of names/ids. Returns an array of external_ids
+	// (NULLs for unresolved names).
+	function resolve_names($names)
+	{
+		return array_map(array($this, 'resolve_name'), $names);
+	}
+
+	// ── Minimum clade (MRCA of N taxa) ──────────────────────────────
+
+	// MRCA of an arbitrary list of external_ids. Returns the same row
+	// shape as lookup_external, or NULL if fewer than two resolve.
+	function mrca_of($ext_ids)
+	{
+		$rows = $this->lookup_external($ext_ids);
+		if (count($rows) < 2) return null;
+		$minL = PHP_INT_MAX;
+		$maxR = PHP_INT_MIN;
+		foreach ($rows as $r) {
+			if ((int)$r['nleft']  < $minL) $minL = (int)$r['nleft'];
+			if ((int)$r['nright'] > $maxR) $maxR = (int)$r['nright'];
+		}
+		return $this->mrca_by_bounds($minL, $maxR);
+	}
+
+	// ── Maximum clade (largest clade containing A but not B) ────────
+
+	// Given one or more internal specifiers and one or more external
+	// specifiers, find the largest clade that contains all internals
+	// but none of the externals. Algorithm: find MRCA of all specifiers,
+	// then walk down to the child that contains the internal specifiers.
+	// Returns the same row shape as lookup_external, or NULL.
+	function max_clade($include_ext, $exclude_ext)
+	{
+		$all = array_merge($include_ext, $exclude_ext);
+		$rows = $this->lookup_external($all);
+		$by_ext = array();
+		foreach ($rows as $r) $by_ext[$r['external_id']] = $r;
+
+		foreach ($all as $ext) {
+			if (!isset($by_ext[$ext])) return null;
+		}
+
+		// MRCA of all specifiers.
+		$minL = PHP_INT_MAX;
+		$maxR = PHP_INT_MIN;
+		foreach ($rows as $r) {
+			if ((int)$r['nleft']  < $minL) $minL = (int)$r['nleft'];
+			if ((int)$r['nright'] > $maxR) $maxR = (int)$r['nright'];
+		}
+		$mrca = $this->mrca_by_bounds($minL, $maxR);
+		if (!$mrca) return null;
+
+		// Walk from the MRCA down toward the included taxa. At each
+		// step, descend into the child that contains all included
+		// specifiers. Stop when we reach a node that contains no
+		// excluded specifiers — that's the maximum clade.
+		$node = $mrca;
+		$best = null;
+		$max_depth = 500;
+		while ($max_depth-- > 0) {
+			$nl = (int)$node['nleft'];
+			$nr = (int)$node['nright'];
+
+			// Check whether current node excludes all external specifiers.
+			$has_exclude = false;
+			foreach ($exclude_ext as $exc) {
+				$r = $by_ext[$exc];
+				if ((int)$r['nleft'] >= $nl && (int)$r['nright'] <= $nr) {
+					$has_exclude = true;
+					break;
+				}
+			}
+			if (!$has_exclude) { $best = $node; break; }
+
+			// Descend into the child that contains all included specifiers.
+			$children = $this->children_of_internal($node['id']);
+			if (empty($children)) break;
+
+			$next = null;
+			foreach ($children as $child) {
+				$cl = (int)$child['nleft'];
+				$cr = (int)$child['nright'];
+				$has_all = true;
+				foreach ($include_ext as $inc) {
+					$r = $by_ext[$inc];
+					if ((int)$r['nleft'] < $cl || (int)$r['nright'] > $cr) {
+						$has_all = false;
+						break;
+					}
+				}
+				if ($has_all) { $next = $child; break; }
+			}
+			if (!$next) break;
+			$node = $next;
+		}
+
+		return $best;
+	}
+
+	// Direct children of an internal node (by internal id).
+	function children_of_internal($internal_id)
+	{
+		$stmt = $this->db->prepare(
+			'SELECT t.id,
+			        ta.external_id,
+			        ta.label,
+			        CAST(t.depth  AS INTEGER) AS depth,
+			        CAST(t.nleft  AS INTEGER) AS nleft,
+			        CAST(t.nright AS INTEGER) AS nright,
+			        CAST(t.weight AS INTEGER) AS weight,
+			        t.parent
+			 FROM tree t
+			 INNER JOIN taxa ta USING(id)
+			 WHERE t.parent = ? AND t.id != ?'
+		);
+		$stmt->execute(array($internal_id, $internal_id));
+		return $stmt->fetchAll(PDO::FETCH_ASSOC);
+	}
+
+	// ── Sister group ────────────────────────────────────────────────
+
+	// Returns the sister group(s) of a node — the other children of
+	// its parent. Returns an array of rows (same shape as lookup_external).
+	// For a bifurcating tree this is a single node; at a polytomy it
+	// may be multiple.
+	function sister_of($ext_id)
+	{
+		$rows = $this->lookup_external(array($ext_id));
+		if (empty($rows)) return null;
+		$node = $rows[0];
+		$parent_id = $node['parent'];
+		if ($parent_id === $node['id']) return array(); // root has no sister
+
+		$children = $this->children_of_internal($parent_id);
+		return array_values(array_filter($children, function ($c) use ($node) {
+			return $c['id'] !== $node['id'];
+		}));
+	}
+
+	// ── Monophyly test ──────────────────────────────────────────────
+
+	// Tests whether a set of taxa form a monophyletic group in this
+	// tree — i.e. their MRCA contains exactly these taxa and no others
+	// at the same rank. In practice: the MRCA's descendants include
+	// all the listed taxa and no additional tips.
+	//
+	// Returns ['monophyletic' => bool, 'mrca' => row, 'reason' => string].
+	function is_monophyletic($ext_ids)
+	{
+		$rows = $this->lookup_external($ext_ids);
+		if (count($rows) < 2)
+			return array('monophyletic' => false, 'mrca' => null,
+			             'reason' => 'fewer than two taxa resolved');
+
+		$minL = PHP_INT_MAX;
+		$maxR = PHP_INT_MIN;
+		foreach ($rows as $r) {
+			if ((int)$r['nleft']  < $minL) $minL = (int)$r['nleft'];
+			if ((int)$r['nright'] > $maxR) $maxR = (int)$r['nright'];
+		}
+		$mrca = $this->mrca_by_bounds($minL, $maxR);
+		if (!$mrca)
+			return array('monophyletic' => false, 'mrca' => null,
+			             'reason' => 'MRCA not found');
+
+		// Count tips under the MRCA.
+		$mrca_tips = (int)$mrca['weight'];
+		// Count how many of the input taxa are tips (leaves in the supertree).
+		$input_tips = 0;
+		foreach ($rows as $r) {
+			if ((int)$r['nright'] - (int)$r['nleft'] === 1) $input_tips++;
+		}
+
+		// The input set is monophyletic iff the MRCA contains exactly
+		// the tip descendants implied by the input. For a set of tips,
+		// that means mrca_tips === count(input). For a mix of tips and
+		// clades it's harder — we sum the weights of the input taxa.
+		$input_weight = 0;
+		foreach ($rows as $r) $input_weight += (int)$r['weight'];
+
+		$mono = ($mrca_tips === $input_weight);
+		$reason = $mono
+			? 'MRCA contains exactly the specified taxa'
+			: 'MRCA contains ' . $mrca_tips . ' tips but input taxa span ' . $input_weight;
+
+		return array(
+			'monophyletic' => $mono,
+			'mrca'         => array(
+				'id'      => $mrca['external_id'],
+				'display' => $this->ott->prettify_label($mrca['label']),
+				'weight'  => $mrca_tips,
+			),
+			'reason' => $reason,
+		);
+	}
+
+	// ── Topology test ───────────────────────────────────────────────
+
+	// Tests whether the tree is consistent with a stated topology, e.g.
+	// "((A,B),C)" meaning A and B are more closely related to each
+	// other than either is to C. This is equivalent to checking that
+	// MRCA(A,B) is a proper descendant of MRCA(A,B,C).
+	//
+	// Accepts a simple nested array representation:
+	//   [[A, B], C] means ((A,B),C)
+	// Returns ['consistent' => bool, 'reason' => string].
+	function test_topology($topology)
+	{
+		// Flatten the topology to get all leaf taxa.
+		$leaves = array();
+		$this->_flatten_topology($topology, $leaves);
+
+		if (count($leaves) < 3)
+			return array('consistent' => false,
+			             'reason' => 'need at least three taxa');
+
+		$rows = $this->lookup_external($leaves);
+		$by_ext = array();
+		foreach ($rows as $r) $by_ext[$r['external_id']] = $r;
+
+		if (count($by_ext) < count($leaves))
+			return array('consistent' => false,
+			             'reason' => 'not all taxa resolved');
+
+		return $this->_check_topology_node($topology, $by_ext);
+	}
+
+	private function _flatten_topology($node, &$out)
+	{
+		if (is_string($node)) { $out[] = $node; return; }
+		foreach ($node as $child) $this->_flatten_topology($child, $out);
+	}
+
+	private function _check_topology_node($node, &$by_ext)
+	{
+		if (is_string($node)) return array('consistent' => true, 'reason' => 'leaf');
+
+		// Compute MRCA of this subtree.
+		$leaves = array();
+		$this->_flatten_topology($node, $leaves);
+		$minL = PHP_INT_MAX;
+		$maxR = PHP_INT_MIN;
+		foreach ($leaves as $ext) {
+			$r = $by_ext[$ext];
+			if ((int)$r['nleft']  < $minL) $minL = (int)$r['nleft'];
+			if ((int)$r['nright'] > $maxR) $maxR = (int)$r['nright'];
+		}
+		$my_mrca = $this->mrca_by_bounds($minL, $maxR);
+
+		// Each child subtree's MRCA must be a proper descendant of this MRCA
+		// (or equal if the child is a leaf). And sibling subtrees' MRCAs
+		// must not be nested in each other.
+		$child_mrcas = array();
+		foreach ($node as $child) {
+			$child_leaves = array();
+			$this->_flatten_topology($child, $child_leaves);
+			if (count($child_leaves) === 1) {
+				$child_mrcas[] = $by_ext[$child_leaves[0]];
+				continue;
+			}
+			$cMinL = PHP_INT_MAX;
+			$cMaxR = PHP_INT_MIN;
+			foreach ($child_leaves as $ext) {
+				$r = $by_ext[$ext];
+				if ((int)$r['nleft']  < $cMinL) $cMinL = (int)$r['nleft'];
+				if ((int)$r['nright'] > $cMaxR) $cMaxR = (int)$r['nright'];
+			}
+			$cm = $this->mrca_by_bounds($cMinL, $cMaxR);
+			if (!$cm)
+				return array('consistent' => false, 'reason' => 'child MRCA not found');
+
+			// Child MRCA must be strictly inside the parent MRCA.
+			if ((int)$cm['nleft'] <= (int)$my_mrca['nleft'] ||
+				(int)$cm['nright'] >= (int)$my_mrca['nright']) {
+				if ($cm['id'] !== $my_mrca['id']) {
+					return array('consistent' => false,
+						'reason' => 'child MRCA not nested in parent MRCA');
+				}
+			}
+
+			$child_mrcas[] = $cm;
+
+			// Recurse into the child subtree.
+			$sub = $this->_check_topology_node($child, $by_ext);
+			if (!$sub['consistent']) return $sub;
+		}
+
+		// Sibling MRCAs must not be nested within each other.
+		for ($i = 0; $i < count($child_mrcas); $i++) {
+			for ($j = $i + 1; $j < count($child_mrcas); $j++) {
+				$a = $child_mrcas[$i];
+				$b = $child_mrcas[$j];
+				if ((int)$a['nleft'] <= (int)$b['nleft'] && (int)$a['nright'] >= (int)$b['nright'])
+					return array('consistent' => false,
+						'reason' => 'sibling clades are nested');
+				if ((int)$b['nleft'] <= (int)$a['nleft'] && (int)$b['nright'] >= (int)$a['nright'])
+					return array('consistent' => false,
+						'reason' => 'sibling clades are nested');
+			}
+		}
+
+		return array('consistent' => true, 'reason' => 'topology matches');
+	}
+
 	// Build the minimum spanning subtree of a set of external_ids (in
 	// visit order). Returns
 	//   ['nodes' => map keyed by external_id, 'edges' => list of {source, target},
