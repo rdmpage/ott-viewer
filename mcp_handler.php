@@ -205,6 +205,20 @@ function getToolDefinitions()
 				'required' => array('taxon'),
 			),
 		),
+		array(
+			'name'        => 'study_info',
+			'description' => 'Look up a phylogenetic study that contributes to the synthesis tree. Accepts a DOI (e.g. "10.1126/science.1211028") or an Open Tree study ID (e.g. "pg_1428"). Returns the publication details, which trees from the study are used, and which nodes each tree supports, conflicts with, or resolves.',
+			'inputSchema' => array(
+				'type'       => 'object',
+				'properties' => array(
+					'study' => array(
+						'type'        => 'string',
+						'description' => 'DOI or Open Tree study ID.',
+					),
+				),
+				'required' => array('study'),
+			),
+		),
 	);
 }
 
@@ -224,6 +238,7 @@ function callTool($name, $args)
 		case 'is_monophyletic':return tool_monophyly($q, $args);
 		case 'triplet':        return tool_triplet($q, $args);
 		case 'node_info':      return tool_node($q, $db, $args);
+		case 'study_info':     return tool_study($q, $db, $args);
 		default:               return null;
 	}
 }
@@ -399,6 +414,64 @@ function tool_node(TreeQueries $q, PDO $db, $args)
 			foreach ($studies as $s) $lines[] = '  ' . $s;
 		}
 	}
+
+	return implode("\n", $lines);
+}
+
+function tool_study(TreeQueries $q, PDO $db, $args)
+{
+	$input = trim($args['study'] ?? '');
+	if ($input === '') return 'Provide a DOI or study ID.';
+
+	$study_id = null;
+	if (preg_match('/^(ot|pg)_\d+$/', $input)) {
+		$study_id = $input;
+	} else {
+		$doi = preg_replace('#^https?://(dx\.)?doi\.org/#', '', $input);
+		$stmt = $db->prepare('SELECT study_id FROM studies WHERE doi = ?');
+		$stmt->execute(array($doi));
+		$row = $stmt->fetch(PDO::FETCH_ASSOC);
+		if ($row) $study_id = $row['study_id'];
+		else return 'No study found with DOI: ' . $doi;
+	}
+
+	$stmt = $db->prepare('SELECT * FROM studies WHERE study_id = ?');
+	$stmt->execute(array($study_id));
+	$study = $stmt->fetch(PDO::FETCH_ASSOC);
+	if (!$study) return 'Study not found: ' . $study_id;
+
+	$lines = array();
+	$lines[] = 'Study: ' . $study['study_id'];
+	if ($study['publication_ref']) $lines[] = 'Citation: ' . $study['publication_ref'];
+	if ($study['doi']) $lines[] = 'DOI: https://doi.org/' . $study['doi'];
+	if ($study['year']) $lines[] = 'Year: ' . $study['year'];
+	if ($study['focal_clade_name']) $lines[] = 'Focal clade: ' . $study['focal_clade_name'];
+	if ($study['curator_names']) {
+		$curators = json_decode($study['curator_names'], true);
+		if ($curators) $lines[] = 'Curators: ' . implode(', ', $curators);
+	}
+
+	$rel_stmt = $db->prepare(
+		"SELECT a.relation, COUNT(DISTINCT a.node_external_id) AS cnt
+		 FROM annotations a WHERE a.study_tree LIKE ? || '@%'
+		 GROUP BY a.relation ORDER BY cnt DESC"
+	);
+	$rel_stmt->execute(array($study_id));
+
+	$labels = array('supported_by' => 'Supports', 'conflicts_with' => 'Conflicts with',
+		'resolves' => 'Resolves', 'partial_path_of' => 'Partial path of', 'terminal' => 'Terminal at');
+	$lines[] = '';
+	$lines[] = 'Contribution to synthesis tree:';
+	$any = false;
+	while ($r = $rel_stmt->fetch(PDO::FETCH_ASSOC)) {
+		$label = isset($labels[$r['relation']]) ? $labels[$r['relation']] : $r['relation'];
+		$lines[] = '  ' . $label . ': ' . $r['cnt'] . ' nodes';
+		$any = true;
+	}
+	if (!$any) $lines[] = '  (no annotations — study not used in current synthesis)';
+
+	$lines[] = '';
+	$lines[] = 'View on Open Tree: https://tree.opentreeoflife.org/curator/study/view/' . $study_id;
 
 	return implode("\n", $lines);
 }

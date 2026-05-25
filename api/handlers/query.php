@@ -20,9 +20,10 @@ function api_handle_query(PDO $db, array $params)
 		case 'monophyly':  _op_monophyly($q, $params);  break;
 		case 'triplet':    _op_triplet($q, $params);    break;
 		case 'node':       _op_node($q, $db, $params);  break;
+		case 'study':      _op_study($q, $db, $params); break;
 		default:
 			api_error('bad_request', "Unknown op: '$op'.",
-				array('op' => $op, 'valid' => array('resolve','mrca','maxclade','sister','monophyly','triplet','node')),
+				array('op' => $op, 'valid' => array('resolve','mrca','maxclade','sister','monophyly','triplet','node','study')),
 				400);
 	}
 }
@@ -296,6 +297,115 @@ function _op_node(TreeQueries $q, PDO $db, $params)
 	if (!empty($r['failed'])) $out['unresolved'] = $r['failed'];
 
 	api_json(array('op' => 'node', 'node' => $out));
+}
+
+// ── Study lookup ─────────────────────────────────────────────────────────
+
+const STUDY_NODE_CAP = 50;
+
+function _op_study(TreeQueries $q, PDO $db, $params)
+{
+	$study_id = isset($params['study']) ? trim((string)$params['study']) : '';
+	$doi      = isset($params['doi'])   ? trim((string)$params['doi'])   : '';
+
+	if ($study_id === '' && $doi === '')
+		api_error('bad_request', 'Provide `study` (e.g. ot_1278) or `doi` (e.g. 10.1126/science.1211028).', null, 400);
+
+	// Resolve DOI to study_id if needed.
+	if ($study_id === '' && $doi !== '') {
+		$doi = preg_replace('#^https?://(dx\.)?doi\.org/#', '', $doi);
+		$stmt = $db->prepare('SELECT study_id FROM studies WHERE doi = ?');
+		$stmt->execute(array($doi));
+		$row = $stmt->fetch(PDO::FETCH_ASSOC);
+		if (!$row)
+			api_error('not_found', "No study found with DOI '$doi'.", array('doi' => $doi), 404);
+		$study_id = $row['study_id'];
+	}
+
+	// Fetch study metadata.
+	$stmt = $db->prepare(
+		'SELECT study_id, publication_ref, doi, year, focal_clade_name, curator_names
+		 FROM studies WHERE study_id = ?'
+	);
+	$stmt->execute(array($study_id));
+	$study = $stmt->fetch(PDO::FETCH_ASSOC);
+	if (!$study)
+		api_error('not_found', "Study '$study_id' not found.", array('study' => $study_id), 404);
+
+	$out = array(
+		'op'              => 'study',
+		'study_id'        => $study['study_id'],
+		'publication_ref' => $study['publication_ref'],
+		'doi'             => $study['doi'],
+		'year'            => $study['year'] ? (int)$study['year'] : null,
+		'focal_clade'     => $study['focal_clade_name'],
+		'curators'        => $study['curator_names'] ? json_decode($study['curator_names'], true) : null,
+	);
+
+	// Find all trees from this study that appear in annotations.
+	$tree_stmt = $db->prepare(
+		"SELECT DISTINCT study_tree FROM annotations
+		 WHERE study_tree LIKE ? || '@%'"
+	);
+	$tree_stmt->execute(array($study_id));
+	$trees = array();
+	while ($r = $tree_stmt->fetch(PDO::FETCH_ASSOC)) {
+		$trees[] = $r['study_tree'];
+	}
+	$out['trees'] = $trees;
+
+	// Per-relation summary: count of distinct nodes, plus a sample of named nodes.
+	$rel_stmt = $db->prepare(
+		"SELECT a.relation,
+		        COUNT(DISTINCT a.node_external_id) AS node_count
+		 FROM annotations a
+		 WHERE a.study_tree LIKE ? || '@%'
+		 GROUP BY a.relation
+		 ORDER BY node_count DESC"
+	);
+	$rel_stmt->execute(array($study_id));
+
+	$relations = array();
+	while ($r = $rel_stmt->fetch(PDO::FETCH_ASSOC)) {
+		$relations[$r['relation']] = array(
+			'count' => (int)$r['node_count'],
+			'nodes' => array(),
+		);
+	}
+
+	// Fetch named nodes per relation (capped).
+	$node_stmt = $db->prepare(
+		"SELECT DISTINCT a.relation, a.node_external_id, ta.label
+		 FROM annotations a
+		 INNER JOIN taxa ta ON ta.external_id = a.node_external_id
+		 WHERE a.study_tree LIKE ? || '@%'
+		   AND ta.label NOT LIKE 'mrca%'
+		 ORDER BY a.relation, ta.label"
+	);
+	$node_stmt->execute(array($study_id));
+	$counts = array();
+	while ($r = $node_stmt->fetch(PDO::FETCH_ASSOC)) {
+		$rel = $r['relation'];
+		if (!isset($relations[$rel])) continue;
+		if (!isset($counts[$rel])) $counts[$rel] = 0;
+		if ($counts[$rel] >= STUDY_NODE_CAP) continue;
+		$counts[$rel]++;
+		$relations[$rel]['nodes'][] = array(
+			'id'      => $r['node_external_id'],
+			'display' => $q->ott->prettify_label($r['label']),
+		);
+	}
+
+	$out['annotations'] = $relations;
+
+	$out['external_links'] = array(
+		'opentree' => 'https://tree.opentreeoflife.org/curator/study/view/' . urlencode($study_id),
+	);
+	if ($study['doi']) {
+		$out['external_links']['doi'] = 'https://doi.org/' . $study['doi'];
+	}
+
+	api_json($out);
 }
 
 // ── Newick parser ────────────────────────────────────────────────────────
