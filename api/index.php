@@ -107,6 +107,11 @@ try
 			}
 			break;
 
+		case 'query':
+			require_once dirname(__FILE__) . '/handlers/query.php';
+			api_handle_query($db, $_GET);
+			break;
+
 		default:
 			api_error('not_found', "No such resource: '$resource'.",
 				array('resource' => $resource, 'path' => $path), 404);
