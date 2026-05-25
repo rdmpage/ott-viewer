@@ -18,11 +18,11 @@ function api_handle_query(PDO $db, array $params)
 		case 'maxclade':   _op_maxclade($q, $params);   break;
 		case 'sister':     _op_sister($q, $params);     break;
 		case 'monophyly':  _op_monophyly($q, $params);  break;
-		case 'topology':   _op_topology($q, $params);   break;
+		case 'triplet':    _op_triplet($q, $params);    break;
 		case 'node':       _op_node($q, $db, $params);  break;
 		default:
 			api_error('bad_request', "Unknown op: '$op'.",
-				array('op' => $op, 'valid' => array('resolve','mrca','maxclade','sister','monophyly','topology','node')),
+				array('op' => $op, 'valid' => array('resolve','mrca','maxclade','sister','monophyly','triplet','node')),
 				400);
 	}
 }
@@ -183,43 +183,46 @@ function _op_monophyly(TreeQueries $q, $params)
 	api_json($out);
 }
 
-function _op_topology(TreeQueries $q, $params)
+// Triplet test: are A and B more closely related to each other than
+// either is to C? Expressed as ((A,B),C). Exactly three taxa required.
+function _op_triplet(TreeQueries $q, $params)
 {
-	$newick = _query_require($params, 'topology');
+	$closer  = _query_require_names($q, $params, 'closer', 2);
+	$distant = _query_require_names($q, $params, 'distant', 1);
 
-	// Parse a simple Newick-like string into a nested array.
-	// Supports ((A,B),C) where A/B/C are taxon names or OTT IDs.
-	$parsed = _parse_simple_newick($newick);
-	if ($parsed === null)
-		api_error('bad_request', 'Could not parse topology string.', null, 400);
+	if (count($closer['resolved']) !== 2)
+		api_error('bad_request', '`closer` must name exactly two taxa.', null, 400);
+	if (count($distant['resolved']) !== 1)
+		api_error('bad_request', '`distant` must name exactly one taxon.', null, 400);
 
-	// Resolve all leaf names.
-	$leaves = array();
-	_collect_leaves($parsed, $leaves);
-	$resolved_map = array();
-	$failed = array();
-	foreach ($leaves as $name) {
-		$ext = $q->resolve_name($name);
-		if ($ext) $resolved_map[$name] = $ext;
-		else      $failed[] = $name;
-	}
+	$a = $closer['resolved'][0];
+	$b = $closer['resolved'][1];
+	$c = $distant['resolved'][0];
 
-	if (!empty($failed))
-		api_error('node_not_found',
-			'Some taxa in the topology did not resolve.',
-			array('failed' => $failed), 404);
+	$mrca_ab  = $q->mrca($a, $b);
+	$mrca_abc = $q->mrca_of(array($a, $b, $c));
 
-	// Replace names with external_ids in the topology structure.
-	$resolved_topo = _replace_leaves($parsed, $resolved_map);
+	if (!$mrca_ab || !$mrca_abc)
+		api_error('internal_error', 'MRCA computation failed.', null, 500);
 
-	$result = $q->test_topology($resolved_topo);
+	// The triplet holds iff MRCA(A,B) is a strict descendant of MRCA(A,B,C).
+	$consistent = (int)$mrca_ab['nleft'] > (int)$mrca_abc['nleft']
+	           && (int)$mrca_ab['nright'] < (int)$mrca_abc['nright'];
+
+	$closer_rows  = $q->lookup_external($closer['resolved']);
+	$distant_rows = $q->lookup_external($distant['resolved']);
 
 	$out = array(
-		'op'         => 'topology',
-		'topology'   => $newick,
-		'consistent' => $result['consistent'],
-		'reason'     => $result['reason'],
+		'op'         => 'triplet',
+		'consistent' => $consistent,
+		'closer'     => array_map(function ($r) use ($q) { return _format_node($r, $q); }, $closer_rows),
+		'distant'    => _format_node($distant_rows[0], $q),
+		'mrca_closer'  => _format_node($mrca_ab, $q),
+		'mrca_all'     => _format_node($mrca_abc, $q),
 	);
+
+	$failed = array_merge($closer['failed'], $distant['failed']);
+	if (!empty($failed)) $out['unresolved'] = $failed;
 
 	api_json($out);
 }
