@@ -38,6 +38,10 @@ End-to-end working pipeline (server → JSON → SVG):
 | `viewer.js`             | Client-side: scene building, interpolation, SVG rendering, peek overlay, history.        |
 | `viewer.css`            | Shared styles.                                                                           |
 | `import_studies.php`    | Populates the `studies` table from phylesystem JSON files.                               |
+| `tree_queries.php`      | Structural query layer: MRCA, sister group, max clade, monophyly, triplet test.          |
+| `mcp_server.php`        | MCP stdio server — LLMs can "talk to the tree". See `mcp-server.md`.                    |
+| `mcp_http_server.php`   | MCP HTTP transport (POST to `/mcp`). Same tools as stdio.                                |
+| `mcp_handler.php`       | Shared MCP tool definitions and implementations.                                         |
 | `tests/trees.php`       | Layer 1 schema + invariant tests against `tree.php`.                                     |
 
 `transition.html` is a separate two-tree demo page sharing the same `viewer.js` / `viewer.css`.
@@ -222,10 +226,33 @@ Bracket labels for named clades display a [PhyloPic](https://www.phylopic.org/) 
 
 ### Dark mode
 
-PhyloPic thumbnails are black silhouettes on a transparent background. In dark mode, CSS `filter: invert(1)` flips them to white.
+PhyloPic silhouettes are recoloured from black to mid-gray (`#808080`) server-side when cached, so they are visible against both light and dark backgrounds without any client-side filter. This avoids cross-browser issues with CSS/SVG filters on SVG `<image>` elements (Safari in particular).
+
+## Query API
+
+`GET /api/v1/query?op=<operation>&<params>` exposes tree interrogation operations. All accept taxon names or OTT IDs.
+
+| Operation | Parameters | Description |
+|-----------|-----------|-------------|
+| `resolve` | `names=` | Name → OTT ID lookup |
+| `mrca` | `taxa=` | Minimum clade (MRCA of N taxa) |
+| `maxclade` | `include=`, `exclude=` | Maximum clade (phyloreference) |
+| `sister` | `taxon=` | Sister group (climbs through monotypic ancestors) |
+| `monophyly` | `taxa=` | Test whether taxa form an exclusive group |
+| `triplet` | `closer=`, `distant=` | Three-taxon relationship test |
+| `node` | `taxon=` | Full node info with annotations, sister, parent |
+| `study` | `study_id=` or `doi=` | Study metadata and contribution to synthesis |
+
+The `mrca` and `maxclade` operations implement minimum-clade and maximum-clade phyloreferences respectively, as defined by the PhyloCode.
+
+## MCP server
+
+An MCP (Model Context Protocol) server lets LLMs "talk to the tree" — asking about relationships, resolving phylogenetic definitions, and looking up study contributions. Runs over stdio (Claude Desktop / Claude Code) or HTTP (POST to `/mcp`). See `mcp-server.md` for full documentation, setup instructions, and examples.
 
 ## Design notes
 
 - `viewer-pipeline-design.md` — JSON schema, transition endpoint, gotchas, deferred items.
 - `summary-node-peek-design.md` — peek interaction design discussion.
+- `mcp-server.md` — MCP server architecture, tool reference, and phyloreference support.
+- `phylogeny-queries.md` — structural query patterns and the nested-set encoding.
 - `background.md` — references and reading.
