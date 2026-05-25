@@ -24,8 +24,9 @@ $k = isset($_GET['k']) ? max(2, (int)$_GET['k']) : 0;
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>OTT viewer</title>
-<link rel="stylesheet" href="viewer.css">
+<link rel="stylesheet" href="viewer.css?v=<?= filemtime('viewer.css') ?>">
 </head>
 <body>
 
@@ -137,7 +138,7 @@ $k = isset($_GET['k']) ? max(2, (int)$_GET['k']) : 0;
 	</aside>
 </div>
 
-<script src="viewer.js"></script>
+<script src="viewer.js?v=<?= filemtime('viewer.js') ?>"></script>
 <script>
 browseInit(<?php echo json_encode($taxon); ?>, <?php echo (int)$k; ?>);
 </script>

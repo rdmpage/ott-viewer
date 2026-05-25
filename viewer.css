@@ -526,3 +526,25 @@ input[type=range] { width: 300px; vertical-align: middle; }
 }
 body.loading #loading { display: block; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Narrow viewport (phones) ─────────────────────────────────────────── */
+@media (max-width: 600px) {
+	body { padding: 0.3em 0.4em; }
+	svg  { border: none; }
+
+	/* Navbar: wrap search below the links, let it fill the width */
+	#navbar { flex-wrap: wrap; gap: 0.4em 0.8em; }
+	#search-bar { order: 10; flex-basis: 100%; }
+	#search-input { width: 100%; }
+	#search-results { width: 100%; }
+
+	/* Collapse nav history by default on small screens */
+	#nav-history { margin-bottom: 0.2em; }
+
+	/* Info panel: full-width overlay so content is readable */
+	#info-panel {
+		width: 100%;
+		max-width: 100%;
+		left: 0;
+	}
+}

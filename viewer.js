@@ -982,8 +982,9 @@ const NS = 'http://www.w3.org/2000/svg';
 // the available SVG height — see idealK() — so the tree always fills the
 // window vertically and resizing changes how many leaves fit, not how big
 // they are. Snapping to K_STEP avoids refetching on every pixel of drag.
-const FONT_PX = 16;
-const ROW_PX  = 20;          // font + breathing room
+const IS_NARROW = window.innerWidth < 600;
+const FONT_PX = IS_NARROW ? 12 : 16;
+const ROW_PX  = IS_NARROW ? 16 : 20;  // font + breathing room
 const K_STEP  = 5;
 const K_MIN   = 10;
 const K_MAX   = 80;
@@ -993,7 +994,7 @@ const K_MAX   = 80;
 // bound=data and shrink the tree. Truncated labels render with an
 // ellipsis; the full string stays in n.display for the info panel and
 // shows in the SVG <title> tooltip on desktop hover.
-const TIP_LABEL_MAX_CHARS = 32;
+const TIP_LABEL_MAX_CHARS = IS_NARROW ? 24 : 32;
 
 function idealK() {
 	// k is budgeted against the leaf-axis dimension: vertical pixels for
@@ -2118,8 +2119,11 @@ let currentT = 0;
 function init() {
 	// Vertical mode: anchor the viewBox at xMid/yMax so the root stays at
 	// the bottom of the SVG and extra width is split evenly left/right.
-	// Horizontal default (xMinYMid meet) keeps the root left-anchored.
+	// Horizontal default: xMinYMid (root left, vertically centred).
+	// Narrow screens: xMinYMin so the tree pins to the top and dead space
+	// falls below the fold instead of splitting above and below.
 	if (IS_VERTICAL) svg.setAttribute('preserveAspectRatio', 'xMidYMax meet');
+	else if (IS_NARROW) svg.setAttribute('preserveAspectRatio', 'xMinYMin meet');
 	scene = buildScene(t1, t2);
 	bracketState = computeBracketState(t2, scene);
 	fitViewBox(scene);
